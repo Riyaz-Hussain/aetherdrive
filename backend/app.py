@@ -49,6 +49,12 @@ def init_db():
             status TEXT NOT NULL
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -66,6 +72,9 @@ class ScanRequest(BaseModel):
 class DownloadRequest(BaseModel):
     plan: List[Dict[str, Any]]
     folder_url: str
+
+class ExclusionsUpdate(BaseModel):
+    exclusions: List[str]
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
@@ -87,14 +96,59 @@ async def events():
 
     return EventSourceResponse(event_generator())
 
+@app.get("/api/settings/exclusions")
+async def get_exclusions():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = 'custom_exclusions'")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        try:
+            return json.loads(row[0])
+        except Exception:
+            return []
+    return []
+
+@app.post("/api/settings/exclusions")
+async def save_exclusions(req: ExclusionsUpdate):
+    clean_list = list(set([x.strip() for x in req.exclusions if x.strip()]))
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO settings (key, value) VALUES ('custom_exclusions', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    """, (json.dumps(clean_list),))
+    conn.commit()
+    conn.close()
+    return clean_list
+
 @app.post("/api/scan")
 async def scan_folder(req: ScanRequest):
     try:
+        # Load persistent exclusions and merge with request
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = 'custom_exclusions'")
+        row = cursor.fetchone()
+        conn.close()
+
+        stored_exclusions = []
+        if row:
+            try:
+                stored_exclusions = json.loads(row[0])
+            except Exception:
+                pass
+
+        merged_exclusions = list(set(
+            stored_exclusions + [p.strip() for p in (req.exclusions or "").split(",") if p.strip()]
+        ))
+
         raw_items = await parse_drive_folder(req.folder_url)
         plan = apply_heuristics(
             raw_items,
             download_dir=DOWNLOAD_DIR,
-            exclusions=req.exclusions,
+            exclusions=",".join(merged_exclusions),
         )
         return plan
     except Exception as e:

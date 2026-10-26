@@ -47,6 +47,7 @@ URL_DOMAIN_PATTERN = re.compile(
 )
 SOCIAL_HANDLE_PATTERN = re.compile(r"@[a-zA-Z0-9_]+", re.IGNORECASE)
 WATERMARK_WORDS = re.compile(r"\b(ahm7tech|careership|google|telegram)\b", re.IGNORECASE)
+COPY_PREFIX_PATTERN = re.compile(r"^(?:Copy\s+of|Copy\s*\(\d+\)\s*of)\s+", re.IGNORECASE)
 
 
 def extract_drive_folder_id(url: str) -> Optional[str]:
@@ -134,15 +135,17 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
 
 
 def sanitize_path(raw_path: str) -> str:
+    """Strips 'Copy of' prefix, URLs, handles, invalid filesystem chars, and redundant double extensions."""
     parts = raw_path.replace("\\", "/").strip("/").split("/")
     cleaned_parts = []
 
     for part in parts:
-        s = URL_DOMAIN_PATTERN.sub("", part)
+        s = COPY_PREFIX_PATTERN.sub("", part)
+        s = URL_DOMAIN_PATTERN.sub("", s)
         s = SOCIAL_HANDLE_PATTERN.sub("", s)
         s = re.sub(r"\|.*?\|", "", s)
         s = re.sub(r"\[.*?\]", "", s)
-        s = re.sub(r"\(.*?\.(?:com|org|net|app|io|xyz)\)", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\(.*?\.(?:com\vert{}org\vert{}net\vert{}app\vert{}io\vert{}xyz)\)", "", s, flags=re.IGNORECASE)
         s = WATERMARK_WORDS.sub("", s)
         s = re.sub(r'[\\/*?:"<>|]', "", s)
         s = s.encode("ascii", "ignore").decode("ascii")
@@ -219,7 +222,7 @@ def apply_heuristics(
             "reason": "Ready for download",
         }
 
-        # 1. Skipped Bloat Files
+        # Skipped Bloat Files
         if (
             matches_wildcards(original_name, active_patterns)
             or matches_wildcards(original_path, active_patterns)
@@ -231,7 +234,7 @@ def apply_heuristics(
             plan.append(plan_entry)
             continue
 
-        # 2. Skipped Normal Files (already on disk)
+        # Skipped Normal Files (already on disk)
         norm_stem = re.sub(r"[^a-zA-Z0-9]", "", Path(sanitized_name).stem.lower())
         if norm_stem in existing_stems:
             plan_entry["action"] = "skip"
