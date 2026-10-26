@@ -64,6 +64,26 @@ def extract_drive_folder_id(url: str) -> Optional[str]:
     return None
 
 
+def fetch_folder_root_name(folder_id: str) -> str:
+    """Retrieves the top-level Google Drive folder title to prevent root downloads."""
+    try:
+        url = f"https://drive.google.com/drive/folders/{folder_id}"
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+        match = re.search(r"<title>([^<]+?)(?:\s*-\s*Google Drive)?</title>", html, re.IGNORECASE)
+        if match:
+            name = match.group(1).strip()
+            if name and name.lower() != "google drive":
+                return sanitize_path(name)
+    except Exception:
+        pass
+    return ""
+
+
 async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
     folder_id = extract_drive_folder_id(folder_url)
     if not folder_id:
@@ -72,7 +92,10 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
     loop = asyncio.get_event_loop()
 
     def _scrape():
+        root_folder_name = fetch_folder_root_name(folder_id)
         items = []
+
+        # 1. Primary inspection using embeddedfolderview
         view_url = f"https://drive.google.com/embeddedfolderview?id={folder_id}#grid"
         req = urllib.request.Request(
             view_url,
@@ -92,12 +115,13 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
                     items.append({
                         "id": f_id,
                         "name": clean_name,
-                        "path": clean_name,
+                        "path": f"{root_folder_name}/{clean_name}" if root_folder_name else clean_name,
                         "size": 0
                     })
         except Exception:
             pass
 
+        # 2. Fallback via gdown crawler (preserves complete nested paths)
         if not items:
             raw = gdown.download_folder(
                 f"https://drive.google.com/drive/folders/{folder_id}",
@@ -107,17 +131,23 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
             )
             for r in (raw or []):
                 if isinstance(r, dict) and r.get("id"):
+                    rel_path = r.get("path", r.get("name", "unnamed"))
+                    if root_folder_name and not rel_path.startswith(root_folder_name):
+                        rel_path = f"{root_folder_name}/{rel_path}"
                     items.append({
                         "id": r["id"],
                         "name": r.get("name", "unnamed"),
-                        "path": r.get("path", r.get("name", "unnamed")),
+                        "path": rel_path,
                         "size": r.get("size", 0)
                     })
                 elif hasattr(r, "id"):
+                    rel_path = getattr(r, "path", getattr(r, "name", "unnamed"))
+                    if root_folder_name and not rel_path.startswith(root_folder_name):
+                        rel_path = f"{root_folder_name}/{rel_path}"
                     items.append({
                         "id": getattr(r, "id"),
                         "name": getattr(r, "name", "unnamed"),
-                        "path": getattr(r, "path", getattr(r, "name", "unnamed")),
+                        "path": rel_path,
                         "size": getattr(r, "size", 0)
                     })
 
@@ -145,7 +175,7 @@ def sanitize_path(raw_path: str) -> str:
         s = SOCIAL_HANDLE_PATTERN.sub("", s)
         s = re.sub(r"\|.*?\|", "", s)
         s = re.sub(r"\[.*?\]", "", s)
-        s = re.sub(r"\(.*?\.(?:com\vert{}org\vert{}net\vert{}app\vert{}io\vert{}xyz)\)", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\(.*?\.(?:com|org|net|app|io|xyz)\)", "", s, flags=re.IGNORECASE)
         s = WATERMARK_WORDS.sub("", s)
         s = re.sub(r'[\\/*?:"<>|]', "", s)
         s = s.encode("ascii", "ignore").decode("ascii")
@@ -180,11 +210,13 @@ def matches_wildcards(target: str, patterns: List[str]) -> bool:
 
 
 def get_existing_stems_on_disk(download_dir: Path) -> set:
+    """Indexes all valid existing files regardless of size (JSON, PDF, videos, code)."""
     stems = set()
     if not download_dir.exists():
         return stems
     for path in download_dir.rglob("*"):
-        if path.is_file() and path.stat().st_size > 1024 * 1024:
+        # Files must be larger than 0 bytes and not incomplete .part downloads
+        if path.is_file() and path.stat().st_size > 0 and not path.name.endswith(".part"):
             norm = re.sub(r"[^a-zA-Z0-9]", "", path.stem.lower())
             if norm:
                 stems.add(norm)
@@ -222,7 +254,7 @@ def apply_heuristics(
             "reason": "Ready for download",
         }
 
-        # Skipped Bloat Files
+        # 1. Skipped Bloat Files
         if (
             matches_wildcards(original_name, active_patterns)
             or matches_wildcards(original_path, active_patterns)
@@ -234,8 +266,9 @@ def apply_heuristics(
             plan.append(plan_entry)
             continue
 
-        # Skipped Normal Files (already on disk)
-        norm_stem = re.sub(r"[^a-zA-Z0-9]", "", Path(sanitized_name).stem.lower())
+        # 2. Skipped Normal Files (already on disk, matching normalized stems)
+        clean_name_without_copy = COPY_PREFIX_PATTERN.sub("", sanitized_name)
+        norm_stem = re.sub(r"[^a-zA-Z0-9]", "", Path(clean_name_without_copy).stem.lower())
         if norm_stem in existing_stems:
             plan_entry["action"] = "skip"
             plan_entry["category"] = "skip_exists"
@@ -286,21 +319,27 @@ def download_with_gdown_cli(file_id: str, destination: Path, cancel_event: async
 
         if temp_target.exists():
             file_size = temp_target.stat().st_size
-            if file_size > 50000:
+            if file_size > 0:
+                # Validate that the file is not an HTML error or quota page
                 with open(temp_target, "rb") as f:
                     header = f.read(256)
                 if b"<html" in header or b"<!DOCTYPE" in header or b"<!doctype" in header:
                     temp_target.unlink()
-                    return False, "Google Drive served HTML rate limit or quota page"
+                    return False, "Google Drive rate limit or quota page"
 
                 if destination.exists():
                     destination.unlink()
                 temp_target.rename(destination)
-                size_mb = round(file_size / (1024 * 1024), 2)
-                return True, f"{size_mb} MB"
+
+                # Format human readable size in logs
+                if file_size > 1024 * 1024:
+                    size_str = f"{round(file_size / (1024 * 1024), 2)} MB"
+                else:
+                    size_str = f"{round(file_size / 1024, 2)} KB"
+                return True, size_str
             else:
                 temp_target.unlink()
-                return False, f"File too small ({file_size} bytes)"
+                return False, "Downloaded 0 bytes"
 
         return False, stderr.strip() or stdout.strip() or "Download failed"
     except Exception as e:
