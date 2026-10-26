@@ -121,7 +121,6 @@
 
     <section class="bg-surface-panel border border-surface-border rounded-2xl p-4 sm:p-6 shadow-xl backdrop-blur-xl space-y-5">
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <!-- Google Drive Folder Link -->
         <div class="lg:col-span-2">
           <label class="block text-xs font-semibold tracking-wider uppercase text-slate-400 mb-2">Google Drive Folder Link</label>
           <div class="relative rounded-xl border border-surface-border bg-surface-card focus-within:border-brand-500 transition">
@@ -136,7 +135,6 @@
           </div>
         </div>
 
-        <!-- Editable Destination Folder Name -->
         <div>
           <div class="flex items-center justify-between mb-2">
             <label class="text-xs font-semibold tracking-wider uppercase text-slate-400">Destination Folder</label>
@@ -167,16 +165,28 @@
       </div>
 
       <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-3 border-t border-surface-border/50">
-        <button @click="inspectFolder()" :disabled="!folderUrl.trim() || isScanning || isDownloading"
-                class="w-full sm:w-auto flex items-center justify-center space-x-2 px-5 py-2.5 sm:py-3 rounded-xl bg-brand-600 hover:bg-brand-500 font-semibold text-xs sm:text-sm text-white shadow-lg shadow-brand-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition">
-          <template x-if="isScanning">
-            <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+        <div class="flex items-center gap-2">
+          <button @click="inspectFolder()" :disabled="!folderUrl.trim() || isScanning || isDownloading"
+                  class="flex items-center justify-center space-x-2 px-5 py-2.5 sm:py-3 rounded-xl bg-brand-600 hover:bg-brand-500 font-semibold text-xs sm:text-sm text-white shadow-lg shadow-brand-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition">
+            <template x-if="isScanning">
+              <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+              </svg>
+            </template>
+            <span x-text="isScanning ? 'Inspecting Folder Tree...' : 'Inspect & Generate Plan'"></span>
+          </button>
+
+          <button x-show="rawCachedItems.length > 0 && !isDownloading && !isScanning"
+                  @click="reapplyRulesInstant()"
+                  title="Recalculate disk/bloat filters instantly without waiting for Google Drive"
+                  class="flex items-center space-x-1.5 px-3.5 py-2.5 sm:py-3 rounded-xl bg-surface-card hover:bg-surface-border border border-surface-border text-slate-300 hover:text-white text-xs sm:text-sm font-semibold transition">
+            <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.033 8.033 0 01-15.357-2m15.357 2H15"></path>
             </svg>
-          </template>
-          <span x-text="isScanning ? 'Inspecting Folder Tree...' : 'Inspect & Generate Plan'"></span>
-        </button>
+            <span>Re-Apply Rules</span>
+          </button>
+        </div>
 
         <div class="flex items-center gap-2 w-full sm:w-auto">
           <button x-show="plan.length > 0 && !isDownloading" 
@@ -387,7 +397,7 @@
 
   </main>
 
-  <!-- Exclusions Settings Slide-out Drawer -->
+  <!-- Exclusions Settings Drawer -->
   <div x-show="settingsModalOpen" class="fixed inset-0 z-50 overflow-hidden" role="dialog" aria-modal="true">
     <div class="absolute inset-0 bg-black/70 backdrop-blur-sm transition-opacity" @click="settingsModalOpen = false"></div>
     <div class="fixed inset-y-0 right-0 max-w-full flex pl-6 sm:pl-10">
@@ -445,7 +455,7 @@
     </div>
   </div>
 
-  <!-- History Slide-out Drawer -->
+  <!-- History Drawer (With Displayed Folder Name) -->
   <div x-show="historyDrawerOpen" class="fixed inset-0 z-50 overflow-hidden" role="dialog" aria-modal="true">
     <div class="absolute inset-0 bg-black/70 backdrop-blur-sm transition-opacity" @click="historyDrawerOpen = false"></div>
     <div class="fixed inset-y-0 right-0 max-w-full flex pl-6 sm:pl-10">
@@ -470,16 +480,28 @@
                   'bg-rose-500/10 text-rose-400 border-rose-500/30': rec.status === 'failed'
                 }" class="px-2 py-0.5 rounded-full border text-[10px] uppercase font-bold" x-text="rec.status"></span>
               </div>
-              <div class="text-xs text-slate-300 truncate" x-text="rec.folder_url"></div>
+
+              <!-- Clear Folder Name Identification -->
+              <div class="space-y-0.5">
+                <div class="flex items-center space-x-1.5 text-sm font-bold text-cyan-300">
+                  <svg class="w-4 h-4 text-cyan-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                  </svg>
+                  <span class="truncate" x-text="rec.folder_name || 'Unnamed Folder'"></span>
+                </div>
+                <div class="text-[11px] text-slate-500 truncate font-mono" x-text="rec.folder_url"></div>
+              </div>
+
               <div class="grid grid-cols-3 gap-1.5 text-[10px] sm:text-[11px] font-mono text-slate-400 bg-surface-panel p-2 rounded-lg text-center">
                 <div>Total: <span class="text-white font-bold" x-text="rec.total_files"></span></div>
                 <div>Saved: <span class="text-emerald-400 font-bold" x-text="rec.downloaded_files"></span></div>
                 <div>Skipped: <span class="text-amber-400 font-bold" x-text="rec.skipped_files"></span></div>
               </div>
+
               <div class="flex items-center justify-between pt-1">
-                <button @click="folderUrl = rec.folder_url; historyDrawerOpen = false"
+                <button @click="folderUrl = rec.folder_url; destinationFolder = rec.folder_name || ''; historyDrawerOpen = false"
                         class="text-xs text-brand-400 hover:text-brand-300 font-semibold">
-                  Use Link
+                  Use Link & Folder
                 </button>
                 <button @click="deleteHistoryRecord(rec.id)"
                         class="text-xs text-rose-500 hover:text-rose-400">
@@ -514,6 +536,7 @@
         isScanning: false,
         isDownloading: false,
         downloadFinished: false,
+        rawCachedItems: [],
         plan: [],
         selectedIds: [],
         logs: [],
@@ -622,12 +645,14 @@
                 this.transferStatusText = data.status === 'failed' ? 'Download Failed' : 'Download Completed';
                 this.addLog(`Finished: ${data.downloaded} of ${data.total} files saved to disk.`);
                 this.fetchHistory();
+                this.reapplyRulesInstant();
               } else if (data.type === 'cancelled') {
                 this.isDownloading = false;
                 this.downloadFinished = true;
                 this.transferStatusText = 'Cancelled by User';
                 this.addLog(`⚠️ Process halted. Saved ${data.downloaded} files before stopping.`);
                 this.fetchHistory();
+                this.reapplyRulesInstant();
               }
             } catch (err) {
               console.error('SSE Error:', err);
@@ -660,6 +685,7 @@
           if (!this.savedExclusions.includes(val)) {
             const updated = [...this.savedExclusions, val];
             await this.updateExclusionsOnServer(updated);
+            if (this.rawCachedItems.length > 0) this.reapplyRulesInstant();
           }
           this.newExclusionInput = '';
         },
@@ -667,6 +693,7 @@
         async removeExclusion(rule) {
           const updated = this.savedExclusions.filter(r => r !== rule);
           await this.updateExclusionsOnServer(updated);
+          if (this.rawCachedItems.length > 0) this.reapplyRulesInstant();
         },
 
         async updateExclusionsOnServer(list) {
@@ -688,6 +715,7 @@
           this.isScanning = true;
           this.plan = [];
           this.selectedIds = [];
+          this.rawCachedItems = [];
           this.activeTab = 'all';
           this.addLog(`Inspecting remote directory: ${this.folderUrl}`);
           try {
@@ -707,12 +735,37 @@
             const data = await res.json();
             this.destinationFolder = data.root_folder_name || this.destinationFolder;
             this.originalDetectedRoot = this.destinationFolder;
+            this.rawCachedItems = data.raw_items || [];
             this.plan = data.plan || [];
             this.addLog(`Plan generated for folder "${this.destinationFolder}": ${this.downloadCount} to download, ${this.skippedExistsCount} on disk, ${this.skippedBloatCount} bloat.`);
           } catch (e) {
             this.addLog(`Error: ${e.message}`);
           } finally {
             this.isScanning = false;
+          }
+        },
+
+        async reapplyRulesInstant() {
+          if (!this.rawCachedItems || this.rawCachedItems.length === 0) return;
+          this.addLog(`Re-evaluating local disk & bloat rules (instant memory re-parse)...`);
+          try {
+            const res = await fetch('/api/reparse', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                raw_items: this.rawCachedItems,
+                destination_folder: this.destinationFolder,
+                exclusions: this.exclusions
+              })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              this.plan = data.plan || [];
+              this.updatePlanDestinationRoot();
+              this.addLog(`✓ Recalculated: ${this.downloadCount} to download, ${this.skippedExistsCount} on disk, ${this.skippedBloatCount} bloat.`);
+            }
+          } catch (e) {
+            this.addLog(`Re-parse error: ${e.message}`);
           }
         },
 
@@ -736,7 +789,8 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 plan: itemsToDownload,
-                folder_url: this.folderUrl
+                folder_url: this.folderUrl,
+                folder_name: this.destinationFolder
               })
             });
           } catch (e) {
@@ -754,7 +808,8 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 plan: singlePlan,
-                folder_url: this.folderUrl
+                folder_url: this.folderUrl,
+                folder_name: this.destinationFolder
               })
             });
           } catch (e) {

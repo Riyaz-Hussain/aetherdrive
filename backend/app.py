@@ -44,6 +44,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
+            folder_name TEXT DEFAULT '',
             folder_url TEXT NOT NULL,
             total_files INTEGER DEFAULT 0,
             downloaded_files INTEGER DEFAULT 0,
@@ -51,6 +52,12 @@ def init_db():
             status TEXT NOT NULL
         )
     """)
+    # Migration: Ensure folder_name column exists for older databases
+    cursor.execute("PRAGMA table_info(history)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "folder_name" not in columns:
+        cursor.execute("ALTER TABLE history ADD COLUMN folder_name TEXT DEFAULT ''")
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -72,9 +79,15 @@ class ScanRequest(BaseModel):
     destination_folder: Optional[str] = ""
     exclusions: Optional[str] = ""
 
+class ReparseRequest(BaseModel):
+    raw_items: List[Dict[str, Any]]
+    destination_folder: Optional[str] = ""
+    exclusions: Optional[str] = ""
+
 class DownloadRequest(BaseModel):
     plan: List[Dict[str, Any]]
     folder_url: str
+    folder_name: Optional[str] = ""
 
 class ExclusionsUpdate(BaseModel):
     exclusions: List[str]
@@ -158,12 +171,42 @@ async def scan_folder(req: ScanRequest):
         )
         return {
             "root_folder_name": root_name,
+            "raw_items": raw_items,
             "plan": plan
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-async def run_download_job(plan: List[Dict[str, Any]], folder_url: str):
+@app.post("/api/reparse")
+async def reparse_cached(req: ReparseRequest):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = 'custom_exclusions'")
+        row = cursor.fetchone()
+        conn.close()
+
+        stored_exclusions = []
+        if row:
+            try:
+                stored_exclusions = json.loads(row[0])
+            except Exception:
+                pass
+
+        merged_exclusions = list(set(
+            stored_exclusions + [p.strip() for p in (req.exclusions or "").split(",") if p.strip()]
+        ))
+
+        plan = apply_heuristics(
+            req.raw_items,
+            download_dir=DOWNLOAD_DIR,
+            exclusions=",".join(merged_exclusions),
+        )
+        return {"plan": plan}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_name: str = ""):
     global cancel_event
     cancel_event.clear()
 
@@ -239,10 +282,11 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO history (timestamp, folder_url, total_files, downloaded_files, skipped_files, status)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO history (timestamp, folder_name, folder_url, total_files, downloaded_files, skipped_files, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            folder_name or "Unnamed Folder",
             folder_url,
             total,
             downloaded,
@@ -254,7 +298,7 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str):
 
 @app.post("/api/download")
 async def start_download(req: DownloadRequest, background_tasks: BackgroundTasks):
-    background_tasks.add_task(run_download_job, req.plan, req.folder_url)
+    background_tasks.add_task(run_download_job, req.plan, req.folder_url, req.folder_name or "")
     return {"status": "started"}
 
 @app.post("/api/cancel")
