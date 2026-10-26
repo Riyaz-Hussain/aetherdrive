@@ -181,7 +181,6 @@ def get_existing_stems_on_disk(download_dir: Path) -> set:
     if not download_dir.exists():
         return stems
     for path in download_dir.rglob("*"):
-        # Real files only (ignore sub-1MB placeholders)
         if path.is_file() and path.stat().st_size > 1024 * 1024:
             norm = re.sub(r"[^a-zA-Z0-9]", "", path.stem.lower())
             if norm:
@@ -242,15 +241,16 @@ def apply_heuristics(
 
 
 def download_with_gdown_cli(file_id: str, destination: Path, cancel_event: asyncio.Event) -> tuple[bool, str]:
-    """Invokes the gdown CLI binary directly via subprocess matching shell execution."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp_target = destination.with_suffix(destination.suffix + ".part")
 
+    # Pass valid gdown CLI flags only (no --fuzzy)
     cmd = [
         "gdown",
-        f"https://drive.google.com/uc?id={file_id}",
+        file_id,
         "-O", str(temp_target),
-        "--fuzzy"
+        "--no-cookies",
+        "--continue"
     ]
 
     try:
@@ -279,7 +279,6 @@ def download_with_gdown_cli(file_id: str, destination: Path, cancel_event: async
 
         if temp_target.exists():
             file_size = temp_target.stat().st_size
-            # Check if file is non-empty and not a tiny HTML text block
             if file_size > 50000:
                 with open(temp_target, "rb") as f:
                     header = f.read(256)
