@@ -22,7 +22,6 @@ MAGIC_BYTE_SIGNATURES = [
     (0, b"ID3", ".mp3"),
 ]
 
-# Universal promotional bloat patterns - ONLY skip entire files if they match these:
 DEFAULT_EXCLUDE_PATTERNS = [
     "*500$*",
     "*5000$*",
@@ -71,12 +70,14 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
     loop = asyncio.get_event_loop()
 
     def _scrape():
+        items = []
+
+        # Scrape public web view for items
         view_url = f"https://drive.google.com/embeddedfolderview?id={folder_id}#grid"
         req = urllib.request.Request(
             view_url,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         )
-        items = []
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 html = resp.read().decode("utf-8", errors="ignore")
@@ -97,6 +98,7 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
         except Exception:
             pass
 
+        # Fallback to gdown folder inspection
         if not items:
             raw = gdown.download_folder(
                 f"https://drive.google.com/drive/folders/{folder_id}",
@@ -120,7 +122,13 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
                         "size": getattr(r, "size", 0)
                     })
 
-        return items
+        # Deduplicate
+        unique = {}
+        for item in items:
+            if item["id"] not in unique:
+                unique[item["id"]] = item
+
+        return list(unique.values())
 
     items = await loop.run_in_executor(None, _scrape)
     if not items:
@@ -129,24 +137,18 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
 
 
 def sanitize_path(raw_path: str) -> str:
-    """Strips URLs, handles, watermark words, invalid chars, and preserves clean media filenames."""
     parts = raw_path.replace("\\", "/").strip("/").split("/")
     cleaned_parts = []
 
     for part in parts:
         s = URL_DOMAIN_PATTERN.sub("", part)
         s = SOCIAL_HANDLE_PATTERN.sub("", s)
-        # Strip promotional tags and brackets
         s = re.sub(r"\|.*?\|", "", s)
         s = re.sub(r"\[.*?\]", "", s)
         s = re.sub(r"\(.*?\.(?:com|org|net|app|io|xyz)\)", "", s, flags=re.IGNORECASE)
-        # Strip known watermark tags instead of dropping the entire file
         s = WATERMARK_WORDS.sub("", s)
-        # Strip illegal filesystem characters for Linux/Docker
         s = re.sub(r'[\\/*?:"<>|]', "", s)
-        # Strip emojis
         s = s.encode("ascii", "ignore").decode("ascii")
-        # Collapse whitespace
         s = re.sub(r"[_\s]+", " ", s)
         s = re.sub(r"^[-\s]+|[-\s]+$", "", s)
 
@@ -160,7 +162,6 @@ def sanitize_path(raw_path: str) -> str:
             collapsed.append(part)
 
     result = "/".join(collapsed)
-    # Fix accidental double extensions (.mp4.mp4)
     result = re.sub(r"(\.[a-zA-Z0-9]{2,5})\1+$", r"\1", result)
     return result
 
@@ -184,7 +185,6 @@ def get_existing_stems_on_disk(download_dir: Path) -> set:
         return stems
     for path in download_dir.rglob("*"):
         if path.is_file():
-            # Normalized alphanumeric stem
             norm = re.sub(r"[^a-zA-Z0-9]", "", path.stem.lower())
             if norm:
                 stems.add(norm)
@@ -221,7 +221,6 @@ def apply_heuristics(
             "reason": "Ready for download",
         }
 
-        # 1. Skip ONLY if it matches true bloat/spam rules
         if (
             matches_wildcards(original_name, active_patterns)
             or matches_wildcards(original_path, active_patterns)
@@ -232,7 +231,6 @@ def apply_heuristics(
             plan.append(plan_entry)
             continue
 
-        # 2. Check if the file is already on disk using normalized stem matching
         norm_stem = re.sub(r"[^a-zA-Z0-9]", "", Path(sanitized_name).stem.lower())
         if norm_stem in existing_stems:
             plan_entry["action"] = "skip"
@@ -243,6 +241,39 @@ def apply_heuristics(
         plan.append(plan_entry)
 
     return plan
+
+
+def gdown_download_file(file_id: str, destination: Path, cancel_event: asyncio.Event) -> bool:
+    """Uses gdown CLI capability with fuzzy matching and large-file handling."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    url = f"https://drive.google.com/uc?id={file_id}"
+    
+    try:
+        # Use gdown.download with fuzzy=True and direct target output path
+        output = gdown.download(
+            url=url,
+            output=str(destination),
+            quiet=False,
+            fuzzy=True,
+            use_cookies=False
+        )
+
+        if cancel_event.is_set():
+            if destination.exists():
+                destination.unlink()
+            return False
+
+        if output and os.path.exists(output) and os.path.getsize(output) > 0:
+            # If gdown created the file with its own name, align it to destination
+            if Path(output) != destination and os.path.exists(output):
+                if destination.exists():
+                    destination.unlink()
+                os.rename(output, str(destination))
+            return True
+        return False
+    except Exception as e:
+        print(f"gdown download error for {file_id}: {e}")
+        return False
 
 
 async def download_folder_plan(
@@ -257,20 +288,12 @@ async def download_folder_plan(
     if not file_id:
         return False
 
-    url = f"https://drive.google.com/uc?id={file_id}"
     loop = asyncio.get_event_loop()
+    
+    # Run gdown in an executor thread so event loop remains responsive
+    task = loop.run_in_executor(None, gdown_download_file, file_id, target_path, cancel_event)
 
-    def _sync_download():
-        try:
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            output = gdown.download(url, str(target_path), quiet=False, fuzzy=True)
-            return bool(output and os.path.exists(output) and os.path.getsize(output) > 0)
-        except Exception:
-            return False
-
-    download_task = loop.run_in_executor(None, _sync_download)
-
-    while not download_task.done():
+    while not task.done():
         if cancel_event.is_set():
             if target_path.exists():
                 try:
@@ -278,9 +301,9 @@ async def download_folder_plan(
                 except Exception:
                     pass
             return False
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.4)
 
-    return await download_task
+    return await task
 
 
 def repair_extensions(file_path: Path) -> Path:
