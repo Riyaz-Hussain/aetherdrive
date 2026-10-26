@@ -145,13 +145,31 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str):
             else:
                 await broadcast_event({
                     "type": "log",
-                    "message": f"❌ Failed to fetch file ID: {item.get('id')} ({item['sanitized_path']})"
+                    "message": f"❌ Failed to download file: {item['sanitized_path']}"
                 })
 
+        # Determine real operational status
         if status != "cancelled":
-            await broadcast_event({"type": "finished", "downloaded": downloaded, "total": total})
+            if total > 0 and downloaded == 0:
+                status = "failed"
+            elif downloaded < total:
+                status = "partial"
+            else:
+                status = "completed"
+
+            await broadcast_event({
+                "type": "finished",
+                "status": status,
+                "downloaded": downloaded,
+                "total": total
+            })
         else:
-            await broadcast_event({"type": "cancelled", "downloaded": downloaded, "total": total})
+            await broadcast_event({
+                "type": "cancelled",
+                "status": "cancelled",
+                "downloaded": downloaded,
+                "total": total
+            })
 
     except Exception as e:
         status = "failed"
