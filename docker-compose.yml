@@ -1,10 +1,16 @@
 services:
   aetherdrive:
-    build: .
-    image: aetherdrive:latest
+    image: ghcr.io/riyaz-hussain/aetherdrive:latest
     container_name: aetherdrive
     ports:
-      - "8080:8080"
+      - "8070:8080"
+    environment:
+      - DATA_DIR=/app/data
+      - DOWNLOAD_DIR=/downloads
     volumes:
       - ./downloads:/downloads
+      - aether_data:/app/data
     restart: unless-stopped
+
+volumes:
+  aether_data:
