@@ -71,7 +71,7 @@ def extract_drive_folder_id(url: str) -> Optional[str]:
 
 
 async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
-    """Inspects a public Google Drive folder tree using gdown without downloading files."""
+    """Inspects a public Google Drive folder tree using gdown's folder parser."""
     folder_id = extract_drive_folder_id(folder_url)
     if not folder_id:
         raise ValueError("Invalid Google Drive folder link or folder ID provided.")
@@ -79,26 +79,43 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
     loop = asyncio.get_event_loop()
 
     def _fetch_metadata():
-        # gdown internal helper to fetch full folder item tree
         url = f"https://drive.google.com/drive/folders/{folder_id}"
-        items = gdown.get_items(url)
+        # skip_download=True instructs gdown to crawl and resolve the tree without fetching binaries
+        items = gdown.download_folder(url, skip_download=True, quiet=True, use_cookies=False)
         return items
 
     raw_items = await loop.run_in_executor(None, _fetch_metadata)
 
     if not raw_items:
-        raise ValueError("No accessible items found in this Google Drive folder. Ensure the link is public.")
+        raise ValueError("No accessible items found in this Google Drive folder. Verify the folder link is public.")
 
     processed = []
     for item in raw_items:
-        # Filter only download-capable binary objects / files
-        if not item.get("is_folder") and item.get("id"):
+        # Check if item is an object or a path dict
+        if isinstance(item, dict):
+            if not item.get("is_folder") and item.get("id"):
+                processed.append({
+                    "id": item["id"],
+                    "name": item.get("name", "unnamed_file"),
+                    "path": item.get("path", item.get("name", "unnamed_file")),
+                    "size": item.get("size", 0),
+                })
+        elif hasattr(item, "id"):
             processed.append({
-                "id": item["id"],
-                "name": item.get("name", "unnamed_file"),
-                "path": item.get("path", item.get("name", "unnamed_file")),
-                "size": item.get("size", 0),
+                "id": getattr(item, "id"),
+                "name": getattr(item, "name", "unnamed_file"),
+                "path": getattr(item, "path", getattr(item, "name", "unnamed_file")),
+                "size": getattr(item, "size", 0),
             })
+        elif isinstance(item, str):
+            # When file paths are returned as resolved strings
+            processed.append({
+                "id": folder_id,
+                "name": Path(item).name,
+                "path": item,
+                "size": 0,
+            })
+
     return processed
 
 
