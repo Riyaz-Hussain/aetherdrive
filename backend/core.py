@@ -9,6 +9,7 @@ import urllib.parse
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+import requests
 import gdown
 
 MAGIC_BYTE_SIGNATURES = [
@@ -39,6 +40,7 @@ DEFAULT_EXCLUDE_PATTERNS = [
     "*keygen*",
     "*content owner*",
     "*owner channel*",
+    "*bonus*",
     "*binus*",
 ]
 
@@ -85,7 +87,18 @@ def fetch_folder_root_name(folder_id: str) -> str:
     return ""
 
 
-async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
+def format_size(bytes_val: int) -> str:
+    """Formats numeric bytes into human-readable strings."""
+    if not bytes_val or bytes_val <= 0:
+        return "—"
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if bytes_val < 1024.0:
+            return f"{bytes_val:.1f} {unit}"
+        bytes_val /= 1024.0
+    return f"{bytes_val:.2f} TB"
+
+
+async def parse_drive_folder(folder_url: str, custom_root: Optional[str] = "") -> List[Dict[str, Any]]:
     folder_id = extract_drive_folder_id(folder_url)
     if not folder_id:
         raise ValueError("Invalid Google Drive folder link or folder ID provided.")
@@ -93,10 +106,10 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
     loop = asyncio.get_event_loop()
 
     def _scrape():
-        root_folder_name = fetch_folder_root_name(folder_id)
+        root_folder_name = custom_root.strip() if custom_root else fetch_folder_root_name(folder_id)
         items = []
 
-        # 1. Embedded folderview scraper
+        # 1. Embedded folderview scraper with data-size extraction
         view_url = f"https://drive.google.com/embeddedfolderview?id={folder_id}#grid"
         req = urllib.request.Request(
             view_url,
@@ -105,25 +118,27 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 resp_html = resp.read().decode("utf-8", errors="ignore")
+            # Extract ID, name, and size attributes if present in flip-entry
             matches = re.findall(
-                r'data-id="([a-zA-Z0-9_-]+)".*?class="flip-entry-title"[^>]*>([^<]+)<',
+                r'data-id="([a-zA-Z0-9_-]+)"(?:[^>]*?data-size="(\d+)")?[^>]*?>.*?class="flip-entry-title"[^>]*>([^<]+)<',
                 resp_html,
                 re.DOTALL
             )
-            for f_id, name in matches:
+            for f_id, f_size, name in matches:
                 clean_name = html.unescape(urllib.parse.unquote(name)).strip()
                 if clean_name and f_id != folder_id:
                     path_str = f"{root_folder_name}/{clean_name}" if root_folder_name else clean_name
+                    size_int = int(f_size) if f_size else 0
                     items.append({
                         "id": f_id,
                         "name": clean_name,
                         "path": path_str,
-                        "size": 0
+                        "size": size_int
                     })
         except Exception:
             pass
 
-        # 2. Gdown folder metadata crawler (nested folder hierarchy)
+        # 2. Gdown folder metadata crawler
         if not items:
             raw = gdown.download_folder(
                 f"https://drive.google.com/drive/folders/{folder_id}",
@@ -177,7 +192,7 @@ def sanitize_path(raw_path: str) -> str:
         s = SOCIAL_HANDLE_PATTERN.sub("", s)
         s = re.sub(r"\|.*?\|", "", s)
         s = re.sub(r"\[.*?\]", "", s)
-        s = re.sub(r"\(.*?\.(?:com\vert{}org\vert{}net\vert{}app\vert{}io\vert{}xyz)\)", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\(.*?\.(?:com|org|net|app|io|xyz)\)", "", s, flags=re.IGNORECASE)
         s = WATERMARK_WORDS.sub("", s)
         s = re.sub(r'[\\/*?:"<>|&;]', "", s)
         s = s.encode("ascii", "ignore").decode("ascii")
@@ -211,15 +226,13 @@ def matches_wildcards(target: str, patterns: List[str]) -> bool:
     return False
 
 
-def is_file_already_on_disk(download_dir: Path, sanitized_rel_path: str) -> bool:
+def is_file_already_on_disk(download_dir: Path, sanitized_rel_path: str) -> tuple[bool, int]:
     """Accurately checks whether the file exists inside its designated enclosing directory."""
     target_file = download_dir / sanitized_rel_path
     
-    # Direct exact path check
     if target_file.exists() and target_file.is_file() and target_file.stat().st_size > 0:
-        return True
+        return True, target_file.stat().st_size
 
-    # Check same directory for matching normalized stem
     parent_folder = target_file.parent
     if parent_folder.exists() and parent_folder.is_dir():
         target_norm = re.sub(r"[^a-zA-Z0-9]", "", target_file.stem.lower())
@@ -227,9 +240,9 @@ def is_file_already_on_disk(download_dir: Path, sanitized_rel_path: str) -> bool
             if f.is_file() and f.stat().st_size > 0 and not f.name.endswith(".part"):
                 f_norm = re.sub(r"[^a-zA-Z0-9]", "", f.stem.lower())
                 if f_norm == target_norm:
-                    return True
+                    return True, f.stat().st_size
 
-    return False
+    return False, 0
 
 
 def apply_heuristics(
@@ -246,17 +259,21 @@ def apply_heuristics(
         original_path = item.get("path", item.get("name", ""))
         original_name = item.get("name", "")
         file_id = item.get("id")
-        size = item.get("size", 0)
+        raw_size = item.get("size", 0)
 
         sanitized_rel_path = sanitize_path(original_path)
         sanitized_name = Path(sanitized_rel_path).name
+
+        exists_on_disk, disk_size = is_file_already_on_disk(download_dir, sanitized_rel_path)
+        display_size_val = disk_size if exists_on_disk else raw_size
 
         plan_entry = {
             "id": file_id,
             "original_path": original_path,
             "sanitized_path": sanitized_rel_path,
             "name": sanitized_name,
-            "size": size,
+            "size": display_size_val,
+            "size_str": format_size(display_size_val),
             "action": "download",
             "category": "download",
             "reason": "Ready for download",
@@ -274,8 +291,8 @@ def apply_heuristics(
             plan.append(plan_entry)
             continue
 
-        # 2. Check if file genuinely exists inside its parent course directory
-        if is_file_already_on_disk(download_dir, sanitized_rel_path):
+        # 2. Check if file genuinely exists inside its destination folder
+        if exists_on_disk:
             plan_entry["action"] = "skip"
             plan_entry["category"] = "skip_exists"
             plan_entry["reason"] = "File already exists in destination folder"
@@ -291,7 +308,6 @@ def download_with_gdown_cli(file_id: str, destination: Path, cancel_event: async
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp_target = destination.with_suffix(destination.suffix + ".part")
 
-    # Pass the full sharing file URL so gdown bypasses restricted file endpoint errors
     url = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
 
     cmd = [
@@ -339,11 +355,7 @@ def download_with_gdown_cli(file_id: str, destination: Path, cancel_event: async
                     destination.unlink()
                 temp_target.rename(destination)
 
-                if file_size > 1024 * 1024:
-                    size_str = f"{round(file_size / (1024 * 1024), 2)} MB"
-                else:
-                    size_str = f"{round(file_size / 1024, 2)} KB"
-                return True, size_str
+                return True, format_size(file_size)
             else:
                 temp_target.unlink()
                 return False, "Downloaded 0 bytes"

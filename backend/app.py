@@ -17,6 +17,8 @@ from backend.core import (
     download_folder_plan,
     apply_heuristics,
     repair_extensions,
+    fetch_folder_root_name,
+    extract_drive_folder_id,
 )
 
 app = FastAPI(title="AetherDrive")
@@ -67,6 +69,7 @@ async def broadcast_event(data: Dict[str, Any]):
 
 class ScanRequest(BaseModel):
     folder_url: str
+    destination_folder: Optional[str] = ""
     exclusions: Optional[str] = ""
 
 class DownloadRequest(BaseModel):
@@ -126,7 +129,6 @@ async def save_exclusions(req: ExclusionsUpdate):
 @app.post("/api/scan")
 async def scan_folder(req: ScanRequest):
     try:
-        # Load persistent exclusions and merge with request
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT value FROM settings WHERE key = 'custom_exclusions'")
@@ -144,13 +146,20 @@ async def scan_folder(req: ScanRequest):
             stored_exclusions + [p.strip() for p in (req.exclusions or "").split(",") if p.strip()]
         ))
 
-        raw_items = await parse_drive_folder(req.folder_url)
+        folder_id = extract_drive_folder_id(req.folder_url)
+        detected_root = fetch_folder_root_name(folder_id) if folder_id else ""
+        root_name = req.destination_folder.strip() or detected_root
+
+        raw_items = await parse_drive_folder(req.folder_url, custom_root=root_name)
         plan = apply_heuristics(
             raw_items,
             download_dir=DOWNLOAD_DIR,
             exclusions=",".join(merged_exclusions),
         )
-        return plan
+        return {
+            "root_folder_name": root_name,
+            "plan": plan
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
