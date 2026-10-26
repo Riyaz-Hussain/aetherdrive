@@ -72,7 +72,7 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
     def _scrape():
         items = []
 
-        # Scrape public web view for items
+        # Scrape public web view for individual item IDs
         view_url = f"https://drive.google.com/embeddedfolderview?id={folder_id}#grid"
         req = urllib.request.Request(
             view_url,
@@ -98,7 +98,7 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
         except Exception:
             pass
 
-        # Fallback to gdown folder inspection
+        # Fallback to gdown folder metadata inspection
         if not items:
             raw = gdown.download_folder(
                 f"https://drive.google.com/drive/folders/{folder_id}",
@@ -122,7 +122,6 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
                         "size": getattr(r, "size", 0)
                     })
 
-        # Deduplicate
         unique = {}
         for item in items:
             if item["id"] not in unique:
@@ -137,6 +136,7 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
 
 
 def sanitize_path(raw_path: str) -> str:
+    """Strips watermark words, invalid chars, trailing spaces, and redundant double extensions."""
     parts = raw_path.replace("\\", "/").strip("/").split("/")
     cleaned_parts = []
 
@@ -162,8 +162,9 @@ def sanitize_path(raw_path: str) -> str:
             collapsed.append(part)
 
     result = "/".join(collapsed)
-    result = re.sub(r"(\.[a-zA-Z0-9]{2,5})\1+$", r"\1", result)
-    return result
+    # Strip broken double extensions like ".mp4 .mp4" or ".mp4.mp4"
+    result = re.sub(r"(\.[a-zA-Z0-9]{2,5})\s*(\.[a-zA-Z0-9]{2,5})+$", r"\1", result)
+    return result.strip()
 
 
 def matches_wildcards(target: str, patterns: List[str]) -> bool:
@@ -243,13 +244,17 @@ def apply_heuristics(
     return plan
 
 
-def gdown_download_file(file_id: str, destination: Path, cancel_event: asyncio.Event) -> bool:
-    """Uses gdown CLI capability with fuzzy matching and large-file handling."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    url = f"https://drive.google.com/uc?id={file_id}"
-    
+def gdown_download_file(file_id: str, destination: Path, cancel_event: asyncio.Event) -> tuple[bool, str]:
+    """Ensures parent folders exist and runs gdown directly with error reporting."""
     try:
-        # Use gdown.download with fuzzy=True and direct target output path
+        # 1. Force directory creation for nested target files
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return False, f"Filesystem directory creation failed: {e}"
+
+    url = f"https://drive.google.com/uc?id={file_id}"
+
+    try:
         output = gdown.download(
             url=url,
             output=str(destination),
@@ -261,36 +266,32 @@ def gdown_download_file(file_id: str, destination: Path, cancel_event: asyncio.E
         if cancel_event.is_set():
             if destination.exists():
                 destination.unlink()
-            return False
+            return False, "Cancelled by user"
 
         if output and os.path.exists(output) and os.path.getsize(output) > 0:
-            # If gdown created the file with its own name, align it to destination
             if Path(output) != destination and os.path.exists(output):
                 if destination.exists():
                     destination.unlink()
                 os.rename(output, str(destination))
-            return True
-        return False
+            return True, "OK"
+        return False, "File empty or blocked by Google Drive rate limits"
     except Exception as e:
-        print(f"gdown download error for {file_id}: {e}")
-        return False
+        return False, str(e)
 
 
 async def download_folder_plan(
     item: Dict[str, Any],
     target_path: Path,
     cancel_event: asyncio.Event,
-) -> bool:
+) -> tuple[bool, str]:
     if cancel_event.is_set():
-        return False
+        return False, "Cancelled"
 
     file_id = item.get("id")
     if not file_id:
-        return False
+        return False, "Missing file ID"
 
     loop = asyncio.get_event_loop()
-    
-    # Run gdown in an executor thread so event loop remains responsive
     task = loop.run_in_executor(None, gdown_download_file, file_id, target_path, cancel_event)
 
     while not task.done():
@@ -300,7 +301,7 @@ async def download_folder_plan(
                     target_path.unlink()
                 except Exception:
                     pass
-            return False
+            return False, "Cancelled"
         await asyncio.sleep(0.4)
 
     return await task
