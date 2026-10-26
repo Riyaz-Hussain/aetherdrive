@@ -2,6 +2,9 @@ import os
 import re
 import fnmatch
 import asyncio
+import json
+import urllib.request
+import urllib.parse
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -9,34 +12,26 @@ import gdown
 
 # Magic byte signatures for post-download extension repair
 MAGIC_BYTE_SIGNATURES = [
-    # MP4 variants: offset 4 ftyp
     (4, b"ftyp", ".mp4"),
-    # MKV / WebM: starts with 1A 45 DF A3
     (0, b"\x1a\x45\xdf\xa3", ".mkv"),
-    # AVI: starts with RIFF, offset 8 AVI 
     (0, b"RIFF", ".avi"),
-    # ZIP archives (including jar, apk, docx, etc. if generic)
     (0, b"PK\x03\x04", ".zip"),
-    # RAR
     (0, b"Rar!\x1a\x07", ".rar"),
-    # 7-Zip
     (0, b"7z\xbc\xaf\x27\x1c", ".7z"),
-    # PDF
     (0, b"%PDF", ".pdf"),
-    # PNG
     (0, b"\x89PNG\r\n\x1a\n", ".png"),
-    # JPEG
     (0, b"\xff\xd8\xff", ".jpg"),
-    # MP3 ID3 header
     (0, b"ID3", ".mp3"),
 ]
 
-# Default bloat & spam patterns
+# Baseline promotional bloat patterns (applied universally)
 DEFAULT_EXCLUDE_PATTERNS = [
     "*500$*",
+    "*5000$*",
     "*all in one vip*",
     "*bundle*",
     "*free course*",
+    "*free courses*",
     "*join telegram*",
     "*join whatsapp*",
     "*vip access*",
@@ -45,9 +40,12 @@ DEFAULT_EXCLUDE_PATTERNS = [
     "*giveaway*",
     "*crack*",
     "*keygen*",
+    "*channel*",
+    "*content owner*",
+    "*owner channel*",
+    "*binus*",
 ]
 
-# Known domain extensions to strip from folder/file paths
 URL_DOMAIN_PATTERN = re.compile(
     r"(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9_\-]+\.(?:vercel\.app|blogspot\.com|com|net|org|io|me|xyz|top|live|site|info|online)\b",
     re.IGNORECASE,
@@ -56,7 +54,6 @@ SOCIAL_HANDLE_PATTERN = re.compile(r"@[a-zA-Z0-9_]+", re.IGNORECASE)
 
 
 def extract_drive_folder_id(url: str) -> Optional[str]:
-    """Extracts the Google Drive folder ID from various URL formats."""
     patterns = [
         r"folders\/([a-zA-Z0-9_-]+)",
         r"id=([a-zA-Z0-9_-]+)",
@@ -71,77 +68,94 @@ def extract_drive_folder_id(url: str) -> Optional[str]:
 
 
 async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
-    """Inspects a public Google Drive folder tree using gdown's folder parser."""
+    """Crawls Google Drive folder structure and extracts individual file IDs and sizes."""
     folder_id = extract_drive_folder_id(folder_url)
     if not folder_id:
         raise ValueError("Invalid Google Drive folder link or folder ID provided.")
 
     loop = asyncio.get_event_loop()
 
-    def _fetch_metadata():
-        url = f"https://drive.google.com/drive/folders/{folder_id}"
-        # skip_download=True instructs gdown to crawl and resolve the tree without fetching binaries
-        items = gdown.download_folder(url, skip_download=True, quiet=True, use_cookies=False)
+    def _scrape_folder_items():
+        # Query public Google Drive folder web view to extract item payload
+        view_url = f"https://drive.google.com/embeddedfolderview?id={folder_id}#grid"
+        req = urllib.request.Request(
+            view_url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        )
+        
+        items = []
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                html = resp.read().decode("utf-8", errors="ignore")
+                
+            # Parse entries from embedded folder view
+            matches = re.findall(
+                r'data-id="([a-zA-Z0-9_-]+)".*?class="flip-entry-title"[^>]*>([^<]+)<',
+                html,
+                re.DOTALL
+            )
+            for f_id, name in matches:
+                clean_name = urllib.parse.unquote(name).strip()
+                if clean_name and f_id != folder_id:
+                    items.append({
+                        "id": f_id,
+                        "name": clean_name,
+                        "path": clean_name,
+                        "size": 0
+                    })
+        except Exception:
+            pass
+
+        # Fallback to gdown folder scraper if embedded parser yields no items
+        if not items:
+            raw = gdown.download_folder(
+                f"https://drive.google.com/drive/folders/{folder_id}",
+                skip_download=True,
+                quiet=True,
+                use_cookies=False
+            )
+            for r in (raw or []):
+                if isinstance(r, dict) and r.get("id"):
+                    items.append({
+                        "id": r["id"],
+                        "name": r.get("name", "unnamed"),
+                        "path": r.get("path", r.get("name", "unnamed")),
+                        "size": r.get("size", 0)
+                    })
+                elif hasattr(r, "id"):
+                    items.append({
+                        "id": getattr(r, "id"),
+                        "name": getattr(r, "name", "unnamed"),
+                        "path": getattr(r, "path", getattr(r, "name", "unnamed")),
+                        "size": getattr(r, "size", 0)
+                    })
+
         return items
 
-    raw_items = await loop.run_in_executor(None, _fetch_metadata)
-
-    if not raw_items:
-        raise ValueError("No accessible items found in this Google Drive folder. Verify the folder link is public.")
-
-    processed = []
-    for item in raw_items:
-        # Check if item is an object or a path dict
-        if isinstance(item, dict):
-            if not item.get("is_folder") and item.get("id"):
-                processed.append({
-                    "id": item["id"],
-                    "name": item.get("name", "unnamed_file"),
-                    "path": item.get("path", item.get("name", "unnamed_file")),
-                    "size": item.get("size", 0),
-                })
-        elif hasattr(item, "id"):
-            processed.append({
-                "id": getattr(item, "id"),
-                "name": getattr(item, "name", "unnamed_file"),
-                "path": getattr(item, "path", getattr(item, "name", "unnamed_file")),
-                "size": getattr(item, "size", 0),
-            })
-        elif isinstance(item, str):
-            # When file paths are returned as resolved strings
-            processed.append({
-                "id": folder_id,
-                "name": Path(item).name,
-                "path": item,
-                "size": 0,
-            })
-
-    return processed
+    items = await loop.run_in_executor(None, _scrape_folder_items)
+    if not items:
+        raise ValueError("No accessible files found in this Google Drive folder. Verify it is shared as 'Anyone with the link'.")
+    return items
 
 
 def sanitize_path(raw_path: str) -> str:
-    """Strips promotional URLs, @handles, domain names, and bracket noise from a path."""
     parts = raw_path.replace("\\", "/").strip("/").split("/")
     cleaned_parts = []
 
     for part in parts:
-        # Strip URLs and domains
         s = URL_DOMAIN_PATTERN.sub("", part)
-        # Strip social handles
         s = SOCIAL_HANDLE_PATTERN.sub("", s)
-        # Strip excess symbols and surrounding brackets like [BestCourses]
         s = re.sub(r"^\[.*?\]\s*", "", s)
-        s = re.sub(r"\(.*?\.(?:com|org|net|app|io|xyz)\)", "", s, flags=re.IGNORECASE)
-        # Clean double spaces, underscores, and stray dashes
+        s = re.sub(r"\(.*?\.(?:com\vert{}org\vert{}net\vert{}app\vert{}io\vert{}xyz)\)", "", s, flags=re.IGNORECASE)
+        # Strip decorative emojis
+        s = s.encode("ascii", "ignore").decode("ascii")
         s = re.sub(r"[_\s]+", " ", s)
         s = re.sub(r"^[-\s]+|[-\s]+$", "", s)
 
-        # Fallback if cleaning completely emptied the name
         if not s.strip():
             s = part.strip()
         cleaned_parts.append(s.strip())
 
-    # Collapse duplicated identical consecutive parent-child folders
     collapsed = []
     for part in cleaned_parts:
         if not collapsed or collapsed[-1].lower() != part.lower():
@@ -151,27 +165,25 @@ def sanitize_path(raw_path: str) -> str:
 
 
 def matches_wildcards(target: str, patterns: List[str]) -> bool:
-    """Tests if a given string matches any wildcard pattern (case-insensitive)."""
-    target_lower = target.lower()
+    # Normalize emojis and special characters for consistent matching
+    target_norm = target.encode("ascii", "ignore").decode("ascii").lower()
     for pattern in patterns:
         p = pattern.strip().lower()
         if not p:
             continue
         if not p.startswith("*") and not p.endswith("*"):
             p = f"*{p}*"
-        if fnmatch.fnmatch(target_lower, p):
+        if fnmatch.fnmatch(target_norm, p) or fnmatch.fnmatch(target.lower(), p):
             return True
     return False
 
 
 def get_existing_stems_on_disk(download_dir: Path) -> set:
-    """Pre-caches filename stems already on disk to enable fast idempotent checking."""
     stems = set()
     if not download_dir.exists():
         return stems
     for path in download_dir.rglob("*"):
         if path.is_file():
-            # Normalized clean stem (lower-case alphanumeric only)
             norm = re.sub(r"[^a-zA-Z0-9]", "", path.stem.lower())
             if norm:
                 stems.add(norm)
@@ -181,15 +193,11 @@ def get_existing_stems_on_disk(download_dir: Path) -> set:
 def apply_heuristics(
     raw_items: List[Dict[str, Any]],
     download_dir: Path,
-    exclude_folders: Optional[str] = "",
-    exclude_files: Optional[str] = "",
+    exclusions: Optional[str] = "",
 ) -> List[Dict[str, Any]]:
-    """Analyzes raw Drive metadata, runs exclusions, cleans paths, and tags actions."""
-    folder_patterns = [p.strip() for p in (exclude_folders or "").split(",") if p.strip()]
-    file_patterns = [p.strip() for p in (exclude_files or "").split(",") if p.strip()]
-
-    # If user provided no custom file filters, combine with defaults
-    combined_file_patterns = list(set(DEFAULT_EXCLUDE_PATTERNS + file_patterns))
+    """Evaluates items against baseline promotional rules and custom user exclusions."""
+    custom_patterns = [p.strip() for p in (exclusions or "").split(",") if p.strip()]
+    active_patterns = list(set(DEFAULT_EXCLUDE_PATTERNS + custom_patterns))
 
     existing_stems = get_existing_stems_on_disk(download_dir)
     plan = []
@@ -199,11 +207,6 @@ def apply_heuristics(
         original_name = item.get("name", "")
         file_id = item.get("id")
         size = item.get("size", 0)
-
-        # Extract parent directory relative path
-        parent_dir = str(Path(original_path).parent)
-        if parent_dir == ".":
-            parent_dir = ""
 
         sanitized_rel_path = sanitize_path(original_path)
         sanitized_name = Path(sanitized_rel_path).name
@@ -218,21 +221,18 @@ def apply_heuristics(
             "reason": "Ready for ingestion",
         }
 
-        # 1. Check folder-level exclude rules
-        if parent_dir and folder_patterns and matches_wildcards(parent_dir, folder_patterns):
+        # Check against exclusions (inspecting original name, sanitized name, and full path)
+        if (
+            matches_wildcards(original_name, active_patterns)
+            or matches_wildcards(original_path, active_patterns)
+            or matches_wildcards(sanitized_name, active_patterns)
+        ):
             plan_entry["action"] = "skip"
-            plan_entry["reason"] = "Folder matched exclusion pattern"
+            plan_entry["reason"] = "Matched bloat / exclusion pattern"
             plan.append(plan_entry)
             continue
 
-        # 2. Check file-level exclude rules (name and full path)
-        if matches_wildcards(original_name, combined_file_patterns) or matches_wildcards(original_path, combined_file_patterns):
-            plan_entry["action"] = "skip"
-            plan_entry["reason"] = "File matched promotional/bloat filter"
-            plan.append(plan_entry)
-            continue
-
-        # 3. Check idempotent disk sync (avoid re-downloading)
+        # Check idempotent disk sync
         norm_stem = re.sub(r"[^a-zA-Z0-9]", "", Path(sanitized_name).stem.lower())
         if norm_stem in existing_stems:
             plan_entry["action"] = "skip"
@@ -250,7 +250,7 @@ async def download_folder_plan(
     target_path: Path,
     cancel_event: asyncio.Event,
 ) -> bool:
-    """Downloads a single approved Drive file in an asynchronous thread with cancel listening."""
+    """Downloads a single Google Drive file by ID with cancellation checks."""
     if cancel_event.is_set():
         return False
 
@@ -264,18 +264,15 @@ async def download_folder_plan(
     def _sync_download():
         try:
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            # Use gdown to download directly to destination
-            gdown.download(url, str(target_path), quiet=True, fuzzy=True)
-            return target_path.exists() and target_path.stat().st_size > 0
+            output = gdown.download(url, str(target_path), quiet=False, fuzzy=True)
+            return bool(output and os.path.exists(output) and os.path.getsize(output) > 0)
         except Exception:
             return False
 
     download_task = loop.run_in_executor(None, _sync_download)
 
-    # Monitor cancellation status while the download task runs
     while not download_task.done():
         if cancel_event.is_set():
-            # If aborted while downloading, clean up incomplete binary residue
             if target_path.exists():
                 try:
                     target_path.unlink()
@@ -288,11 +285,9 @@ async def download_folder_plan(
 
 
 def repair_extensions(file_path: Path) -> Path:
-    """Reads initial binary header bytes to restore missing or truncated file extensions."""
     if not file_path.exists() or file_path.stat().st_size < 16:
         return file_path
 
-    # If the file already has an identifiable 3-4 char alphanumeric extension, keep it
     if file_path.suffix and re.match(r"^\.[a-zA-Z0-9]{2,5}$", file_path.suffix):
         return file_path
 

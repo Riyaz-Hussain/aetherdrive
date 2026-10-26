@@ -15,14 +15,12 @@ from sse_starlette.sse import EventSourceResponse
 from backend.core import (
     parse_drive_folder,
     download_folder_plan,
-    sanitize_path,
     apply_heuristics,
     repair_extensions,
 )
 
 app = FastAPI(title="AetherDrive")
 
-# Base Directories: downloads isolated from app state
 BASE_DIR = Path(__file__).resolve().parent.parent
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/downloads"))
 DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
@@ -32,12 +30,9 @@ DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_PATH = DATA_DIR / "aether_history.db"
 
-# Mount frontend
 app.mount("/static", StaticFiles(directory=BASE_DIR / "frontend"), name="static")
 
-# Pub/Sub SSE queues and Cancel state
 event_subscribers: List[asyncio.Queue] = []
-current_download_task: Optional[asyncio.Task] = None
 cancel_event = asyncio.Event()
 
 def init_db():
@@ -66,8 +61,7 @@ async def broadcast_event(data: Dict[str, Any]):
 
 class ScanRequest(BaseModel):
     folder_url: str
-    exclude_folders: Optional[str] = ""
-    exclude_files: Optional[str] = ""
+    exclusions: Optional[str] = ""
 
 class DownloadRequest(BaseModel):
     plan: List[Dict[str, Any]]
@@ -100,8 +94,7 @@ async def scan_folder(req: ScanRequest):
         plan = apply_heuristics(
             raw_items,
             download_dir=DOWNLOAD_DIR,
-            exclude_folders=req.exclude_folders,
-            exclude_files=req.exclude_files,
+            exclusions=req.exclusions,
         )
         return plan
     except Exception as e:
@@ -110,22 +103,20 @@ async def scan_folder(req: ScanRequest):
 async def run_download_job(plan: List[Dict[str, Any]], folder_url: str):
     global cancel_event
     cancel_event.clear()
-    
-    total = len([p for p in plan if p.get("action") == "download"])
+
+    to_download = [p for p in plan if p.get("action") == "download"]
+    total = len(to_download)
     downloaded = 0
     status = "completed"
 
     await broadcast_event({"type": "start", "total": total})
 
     try:
-        for idx, item in enumerate(plan):
+        for item in to_download:
             if cancel_event.is_set():
                 status = "cancelled"
                 await broadcast_event({"type": "log", "message": "⚠️ Download job was cancelled by user."})
                 break
-
-            if item.get("action") != "download":
-                continue
 
             target_path = DOWNLOAD_DIR / item["sanitized_path"]
             target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,9 +129,8 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str):
                 "percentage": int(((downloaded) / max(total, 1)) * 100)
             })
 
-            # Check cancel token before starting each file
             success = await download_folder_plan(item, target_path, cancel_event)
-            
+
             if cancel_event.is_set():
                 status = "cancelled"
                 break
@@ -152,6 +142,11 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str):
                     "type": "log",
                     "message": f"✓ Saved & verified: {item['sanitized_path']}"
                 })
+            else:
+                await broadcast_event({
+                    "type": "log",
+                    "message": f"❌ Failed to fetch file ID: {item.get('id')} ({item['sanitized_path']})"
+                })
 
         if status != "cancelled":
             await broadcast_event({"type": "finished", "downloaded": downloaded, "total": total})
@@ -162,7 +157,6 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str):
         status = "failed"
         await broadcast_event({"type": "error", "message": str(e)})
     finally:
-        # Write to SQLite in /app/data
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
@@ -181,7 +175,6 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str):
 
 @app.post("/api/download")
 async def start_download(req: DownloadRequest, background_tasks: BackgroundTasks):
-    global current_download_task
     background_tasks.add_task(run_download_job, req.plan, req.folder_url)
     return {"status": "started"}
 
