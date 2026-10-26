@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AetherDrive — Intelligent Cloud Puller</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background: radial-gradient(circle at 50% 0%, #1e1b4b 0%, #0b0f19 50%, #07090e 100%);
+    }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+</head>
+<body class="text-slate-200 min-h-screen p-4 sm:p-8 md:p-12 font-sans antialiased selection:bg-brand-500 selection:text-white">
+  <div class="max-w-5xl mx-auto space-y-8" x-data="syncApp()" x-init="initSSE()">
+    
+    <!-- Top Navigation Header -->
+    <header class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800/80">
+      <div class="flex items-center gap-3.5">
+        <div class="h-11 w-11 rounded-xl bg-gradient-to-tr from-brand-600 via-indigo-500 to-cyan-400 p-[1px] shadow-lg shadow-brand-500/20">
+          <div class="h-full w-full bg-slate-950 rounded-[11px] flex items-center justify-center">
+            <svg class="w-6 h-6 text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/>
+            </svg>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-xl font-bold tracking-tight text-white">AetherDrive</h1>
+            <span class="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-400 border border-brand-500/20">v2.3</span>
+          </div>
+          <p class="text-xs text-slate-400 mt-0.5">Automated Google Drive Ingestion & File Sanitizer</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <!-- History Trigger Button -->
+        <button @click="openHistory()" 
+                class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-slate-800 text-xs font-medium text-slate-300 transition duration-150">
+          <svg class="w-4 h-4 text-brand-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span>History</span>
+        </button>
+
+        <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/90 border border-slate-800 text-xs font-mono text-slate-300 shadow-inner">
+          <span class="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
+          <span>/downloads</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Configuration Card -->
+    <section class="relative group rounded-2xl bg-slate-900/40 border border-slate-800/80 backdrop-blur-xl p-6 sm:p-8 shadow-2xl">
+      <div class="space-y-6">
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">Folder Link</label>
+          <div class="relative">
+            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+              </svg>
+            </div>
+            <input type="text" x-model="url" id="folder-input" placeholder="https://drive.google.com/drive/folders/..." 
+                   class="w-full pl-10 pr-4 py-3 bg-slate-950/70 border border-slate-800 rounded-xl text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 transition duration-200">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-xs font-semibold uppercase tracking-wider text-slate-300">Exclude Folders</label>
+              <span class="text-[10px] text-brand-400 font-mono font-medium" x-show="autoDetected">Heuristic active</span>
+            </div>
+            <input type="text" x-model="skipFolder" placeholder="Leave empty for auto-detection" 
+                   class="w-full px-4 py-2.5 bg-slate-950/70 border border-slate-800 rounded-xl text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 transition">
+          </div>
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-xs font-semibold uppercase tracking-wider text-slate-300">Exclude Files</label>
+              <span class="text-[10px] text-brand-400 font-mono font-medium" x-show="autoDetected">Heuristic active</span>
+            </div>
+            <input type="text" x-model="skipFile" placeholder="Leave empty for auto-detection" 
+                   class="w-full px-4 py-2.5 bg-slate-950/70 border border-slate-800 rounded-xl text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 transition">
+          </div>
+        </div>
+
+        <button @click="scanFolder()" :disabled="scanning || downloading || !url"
+                class="w-full py-3.5 px-4 rounded-xl font-semibold text-sm tracking-wide text-white bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 active:scale-[0.99] disabled:opacity-50 disabled:pointer-events-none transition duration-200 shadow-lg shadow-brand-500/25 flex items-center justify-center gap-2">
+          <svg x-show="scanning" class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          <span x-text="scanning ? 'Analyzing Remote Tree...' : 'Inspect & Generate Plan'"></span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Progress Card -->
+    <template x-if="downloading">
+      <section class="rounded-2xl bg-slate-900/60 border border-brand-500/30 backdrop-blur-xl p-6 shadow-2xl relative overflow-hidden">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <div class="text-xs font-semibold uppercase tracking-wider text-brand-400">Processing Queue</div>
+            <div class="text-sm font-mono text-white mt-1 truncate max-w-lg" x-text="progress.status"></div>
+          </div>
+          <div class="text-right">
+            <span class="text-2xl font-bold font-mono text-white tracking-tight" x-text="`${progress.percent}%`"></span>
+            <div class="text-xs font-mono text-slate-400" x-text="`${progress.current} / ${progress.total}`"></div>
+          </div>
+        </div>
+        <div class="w-full bg-slate-950/80 rounded-full h-2.5 border border-slate-800 overflow-hidden">
+          <div class="h-full bg-gradient-to-r from-brand-500 via-indigo-500 to-cyan-400 rounded-full transition-all duration-300 ease-out"
+               :style="`width: ${progress.percent}%`"></div>
+        </div>
+      </section>
+    </template>
+
+    <!-- Execution Plan Overview -->
+    <template x-if="plan">
+      <section class="rounded-2xl bg-slate-900/40 border border-slate-800/80 backdrop-blur-xl p-6 sm:p-8 shadow-2xl space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+          <div>
+            <h2 class="text-base font-semibold text-white">Execution Plan Overview</h2>
+            <p class="text-xs text-slate-400 mt-0.5" x-text="`${plan.download.length} items to pull, ${plan.skip.length} items skipped`"></p>
+          </div>
+          <button @click="startDownload()" :disabled="downloading || plan.download.length === 0"
+                  class="py-2.5 px-6 rounded-xl font-semibold text-xs uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none transition duration-150 shadow-lg shadow-emerald-600/20">
+            <span x-text="downloading ? 'Downloading...' : 'Execute Download'"></span>
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <!-- Files to Download -->
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                Clean Files to Pull
+              </span>
+              <span class="text-xs font-mono text-slate-400" x-text="`${plan.download.length} items`"></span>
+            </div>
+            <div class="bg-slate-950/70 border border-slate-800/80 rounded-xl p-3 max-h-[460px] overflow-y-auto space-y-2.5">
+              <template x-for="(item, idx) in plan.download" :key="'dl-' + idx">
+                <div class="p-3 rounded-lg bg-slate-900/40 border border-slate-800/60 font-mono text-xs space-y-1">
+                  <div class="text-emerald-300 font-medium break-words flex items-start gap-2">
+                    <span class="text-emerald-500 shrink-0">✓</span>
+                    <span class="leading-relaxed" x-text="getFileName(item.clean_path)"></span>
+                  </div>
+                  <div class="text-[11px] text-slate-500 pl-4 break-words leading-normal" x-text="getFolderPath(item.clean_path)"></div>
+                </div>
+              </template>
+              <div x-show="plan.download.length === 0" class="text-xs text-slate-500 p-6 text-center">No new files queued for download.</div>
+            </div>
+          </div>
+
+          <!-- Files Skipped -->
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-semibold text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
+                <span class="h-1.5 w-1.5 rounded-full bg-rose-400"></span>
+                Ignored / Filtered
+              </span>
+              <span class="text-xs font-mono text-slate-400" x-text="`${plan.skip.length} items`"></span>
+            </div>
+            <div class="bg-slate-950/70 border border-slate-800/80 rounded-xl p-3 max-h-[460px] overflow-y-auto space-y-2.5">
+              <template x-for="(item, idx) in plan.skip" :key="'skip-' + idx">
+                <div class="p-3 rounded-lg bg-slate-900/40 border border-slate-800/60 font-mono text-xs space-y-1.5">
+                  <div class="flex items-center justify-between gap-2 border-b border-slate-800/40 pb-1.5">
+                    <span class="text-[10px] text-slate-400 font-sans uppercase tracking-wider flex items-center gap-1">
+                      <span class="text-rose-500">✗</span> Excluded Item
+                    </span>
+                    <span class="text-[10px] px-2 py-0.5 rounded bg-rose-950/50 text-rose-300 border border-rose-900/50 break-all max-w-[280px]" x-text="item.reason"></span>
+                  </div>
+                  <div class="text-slate-200 font-medium break-words leading-relaxed pl-1" x-text="getFileName(item.clean_path)"></div>
+                  <div class="text-[11px] text-slate-500 break-words leading-normal pl-1" x-text="getFolderPath(item.clean_path)"></div>
+                </div>
+              </template>
+              <div x-show="plan.skip.length === 0" class="text-xs text-slate-500 p-6 text-center">No items skipped.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <!-- Terminal Log -->
+    <section class="rounded-2xl bg-slate-900/40 border border-slate-800/80 backdrop-blur-xl p-5 shadow-2xl">
+      <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-800/80 text-xs text-slate-400 font-mono">
+        <span class="flex items-center gap-2">
+          <span class="h-2 w-2 rounded-full bg-slate-500"></span>
+          Activity Terminal
+        </span>
+        <button @click="logs = []" class="hover:text-slate-200 transition">Clear</button>
+      </div>
+      <div id="log-box" class="bg-slate-950/80 border border-slate-800/60 rounded-xl p-4 h-56 overflow-y-auto font-mono text-xs space-y-1.5">
+        <template x-for="(log, i) in logs" :key="i">
+          <div :class="{
+            'text-slate-300': log.level === 'INFO',
+            'text-emerald-400 font-medium': log.level === 'SUCCESS',
+            'text-rose-400 font-medium': log.level === 'ERROR'
+          }" x-text="log.text"></div>
+        </template>
+      </div>
+    </section>
+
+    <!-- History Slide-over Drawer -->
+    <div x-show="showHistory" class="fixed inset-0 z-50 overflow-hidden" style="display: none;">
+      <div class="absolute inset-0 bg-slate-950/70 backdrop-blur-sm transition-opacity" @click="showHistory = false"></div>
+      <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
+        <div class="w-screen max-w-md bg-slate-900 border-l border-slate-800 p-6 shadow-2xl flex flex-col justify-between">
+          <div>
+            <!-- Drawer Header -->
+            <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div class="flex items-center gap-2">
+                <svg class="w-5 h-5 text-brand-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <h3 class="text-base font-semibold text-white">Execution History</h3>
+              </div>
+              <div class="flex items-center gap-3">
+                <button x-show="historyList.length > 0" 
+                        @click="clearAllHistory()" 
+                        class="text-[11px] font-sans text-rose-400 hover:text-rose-300 px-2 py-1 rounded bg-rose-950/40 hover:bg-rose-950/80 border border-rose-900/50 transition">
+                  Clear All
+                </button>
+                <button @click="showHistory = false" class="text-slate-400 hover:text-white transition text-lg">&times;</button>
+              </div>
+            </div>
+
+            <!-- History List -->
+            <div class="mt-4 space-y-3 overflow-y-auto max-h-[calc(100vh-140px)] pr-1">
+              <template x-for="item in historyList" :key="item.id">
+                <div class="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 font-mono text-xs space-y-2.5">
+                  <div class="flex items-center justify-between">
+                    <span class="text-slate-400 text-[11px]" x-text="item.created_at"></span>
+                    <div class="flex items-center gap-2">
+                      <span class="text-[10px] px-2 py-0.5 rounded font-sans uppercase font-semibold"
+                            :class="{
+                              'bg-emerald-950 text-emerald-400 border border-emerald-800': item.status === 'Completed',
+                              'bg-amber-950 text-amber-400 border border-amber-800': item.status === 'In Progress' || item.status === 'Partial',
+                              'bg-rose-950 text-rose-400 border border-rose-800': item.status === 'Failed'
+                            }" x-text="item.status"></span>
+                      <!-- Individual Delete Button -->
+                      <button @click="deleteHistoryItem(item.id)" 
+                              title="Delete this record"
+                              class="text-slate-500 hover:text-rose-400 p-0.5 rounded transition">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <!-- Link + Action Buttons Row -->
+                  <div class="flex flex-col gap-2 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/60">
+                    <span class="text-slate-300 break-all text-[11px] leading-relaxed select-all" x-text="item.folder_url"></span>
+                    <div class="flex items-center justify-end gap-2 pt-1 border-t border-slate-800/40">
+                      <!-- Use / Populate Button -->
+                      <button @click="populateUrl(item.folder_url)" 
+                              title="Load into folder URL input"
+                              class="flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-950/70 hover:bg-indigo-900/80 active:bg-brand-600 border border-indigo-800/60 text-[10px] text-indigo-300 hover:text-white font-sans font-medium transition">
+                        <svg class="w-3 h-3 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                        <span>Use Link</span>
+                      </button>
+
+                      <!-- Copy Button -->
+                      <button @click="copyUrl(item.folder_url, $el)" 
+                              title="Copy link to clipboard"
+                              class="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 active:bg-brand-600 border border-slate-700 text-[10px] text-slate-300 hover:text-white font-sans transition">
+                        <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                        <span>Copy</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-3 pt-1 border-t border-slate-800/60 text-[11px]">
+                    <span class="text-emerald-400" x-text="`✓ ${item.downloaded_count} saved`"></span>
+                    <span class="text-slate-400" x-text="`• ${item.total_skipped} skipped`"></span>
+                    <span x-show="item.failed_count > 0" class="text-rose-400" x-text="`✗ ${item.failed_count} failed`"></span>
+                  </div>
+                </div>
+              </template>
+              <div x-show="historyList.length === 0" class="text-center text-slate-500 py-10 text-xs">
+                No history records found.
+              </div>
+            </div>
+          </div>
+
+          <div class="pt-4 border-t border-slate-800">
+            <button @click="showHistory = false" class="w-full py-2 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-lg text-slate-200 transition">Close Drawer</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    function syncApp() {
+      return {
+        url: '',
+        skipFolder: '',
+        skipFile: '',
+        autoDetected: false,
+        scanning: false,
+        downloading: false,
+        showHistory: false,
+        historyList: [],
+        plan: null,
+        progress: { current: 0, total: 0, percent: 0, status: '' },
+        logs: [{ level: 'INFO', text: '[*] AetherDrive engine ready. Volume mounted at /downloads.' }],
+
+        initSSE() {
+          const evtSource = new EventSource("/api/events");
+          evtSource.onmessage = (e) => {
+            try {
+              const payload = JSON.parse(e.data);
+              if (payload.type === 'log') {
+                this.logs.push(payload.data);
+                this.$nextTick(() => {
+                  const el = document.getElementById("log-box");
+                  if (el) el.scrollTop = el.scrollHeight;
+                });
+              } else if (payload.type === 'progress') {
+                this.progress = payload.data;
+                if (payload.data.current === payload.data.total && payload.data.total > 0) {
+                  this.downloading = false;
+                }
+              }
+            } catch(err) {}
+          };
+        },
+
+        getFileName(fullPath) {
+          if (!fullPath) return '';
+          const parts = fullPath.replace(/\\/g, '/').split('/');
+          return parts[parts.length - 1] || fullPath;
+        },
+
+        getFolderPath(fullPath) {
+          if (!fullPath) return '';
+          const parts = fullPath.replace(/\\/g, '/').split('/');
+          if (parts.length <= 1) return '';
+          return parts.slice(0, -1).join(' / ');
+        },
+
+        copyUrl(text, btnEl) {
+          navigator.clipboard.writeText(text).then(() => {
+            const originalHTML = btnEl.innerHTML;
+            btnEl.innerHTML = `
+              <svg class="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+              <span class="text-emerald-400 font-medium">Copied!</span>
+            `;
+            setTimeout(() => {
+              btnEl.innerHTML = originalHTML;
+            }, 1800);
+          }).catch(err => {
+            alert("Clipboard error: " + err);
+          });
+        },
+
+        populateUrl(link) {
+          this.url = link;
+          this.showHistory = false;
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          this.$nextTick(() => {
+            const el = document.getElementById("folder-input");
+            if (el) {
+              el.focus();
+              el.classList.add("ring-2", "ring-indigo-500");
+              setTimeout(() => el.classList.remove("ring-2", "ring-indigo-500"), 1200);
+            }
+          });
+        },
+
+        async openHistory() {
+          try {
+            const res = await fetch("/api/history");
+            const data = await res.json();
+            if (data.success) {
+              this.historyList = data.history;
+              this.showHistory = true;
+            }
+          } catch(e) {
+            alert("Failed to load history: " + e);
+          }
+        },
+
+        async deleteHistoryItem(id) {
+          try {
+            const res = await fetch(`/api/history/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+              this.historyList = this.historyList.filter(item => item.id !== id);
+            }
+          } catch(e) {
+            alert("Failed to delete record: " + e);
+          }
+        },
+
+        async clearAllHistory() {
+          if (!confirm("Are you sure you want to permanently clear all execution history?")) return;
+          try {
+            const res = await fetch("/api/history", { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+              this.historyList = [];
+            }
+          } catch(e) {
+            alert("Failed to clear history: " + e);
+          }
+        },
+
+        async scanFolder() {
+          this.scanning = true;
+          this.plan = null;
+          try {
+            const res = await fetch("/api/scan", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                url: this.url,
+                skip_folder: this.skipFolder,
+                skip_file: this.skipFile
+              })
+            });
+            const isJson = res.headers.get("content-type")?.includes("application/json");
+            const data = isJson ? await res.json() : { success: false, error: await res.text() };
+            if (data.success) {
+              this.plan = data;
+              if (!this.skipFolder && data.auto_detected_folders) {
+                this.skipFolder = data.auto_detected_folders;
+                this.autoDetected = true;
+              }
+              if (!this.skipFile && data.auto_detected_files) {
+                this.skipFile = data.auto_detected_files;
+                this.autoDetected = true;
+              }
+            } else {
+              alert("Scan Failed: " + data.error);
+            }
+          } catch(err) {
+            alert("Network Error: " + err);
+          } finally {
+            this.scanning = false;
+          }
+        },
+
+        async startDownload() {
+          if (!this.plan || !this.plan.download.length) return;
+          this.downloading = true;
+          this.progress = { current: 0, total: this.plan.download.length, percent: 0, status: 'Starting...' };
+          await fetch("/api/download", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              url: this.url,
+              items: this.plan.download,
+              skipped_count: this.plan.skip.length
+            })
+          });
+        }
+      };
+    }
+  </script>
+</body>
+</html>

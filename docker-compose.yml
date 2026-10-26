@@ -1,0 +1,10 @@
+services:
+  aetherdrive:
+    build: .
+    image: aetherdrive:latest
+    container_name: aetherdrive
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./downloads:/downloads
+    restart: unless-stopped
