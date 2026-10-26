@@ -71,8 +71,6 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
 
     def _scrape():
         items = []
-
-        # Scrape public web view for individual item IDs
         view_url = f"https://drive.google.com/embeddedfolderview?id={folder_id}#grid"
         req = urllib.request.Request(
             view_url,
@@ -98,7 +96,6 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
         except Exception:
             pass
 
-        # Fallback to gdown folder metadata inspection
         if not items:
             raw = gdown.download_folder(
                 f"https://drive.google.com/drive/folders/{folder_id}",
@@ -136,7 +133,6 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
 
 
 def sanitize_path(raw_path: str) -> str:
-    """Strips watermark words, invalid chars, trailing spaces, and redundant double extensions."""
     parts = raw_path.replace("\\", "/").strip("/").split("/")
     cleaned_parts = []
 
@@ -162,7 +158,6 @@ def sanitize_path(raw_path: str) -> str:
             collapsed.append(part)
 
     result = "/".join(collapsed)
-    # Strip broken double extensions like ".mp4 .mp4" or ".mp4.mp4"
     result = re.sub(r"(\.[a-zA-Z0-9]{2,5})\s*(\.[a-zA-Z0-9]{2,5})+$", r"\1", result)
     return result.strip()
 
@@ -185,7 +180,8 @@ def get_existing_stems_on_disk(download_dir: Path) -> set:
     if not download_dir.exists():
         return stems
     for path in download_dir.rglob("*"):
-        if path.is_file():
+        # Ignore empty/dummy or HTML error files under 50KB
+        if path.is_file() and path.stat().st_size > 50000:
             norm = re.sub(r"[^a-zA-Z0-9]", "", path.stem.lower())
             if norm:
                 stems.add(norm)
@@ -244,39 +240,79 @@ def apply_heuristics(
     return plan
 
 
+def is_valid_binary_file(file_path: Path) -> bool:
+    """Verifies the downloaded file is real binary data and not a Google Drive HTML error page."""
+    if not file_path.exists() or file_path.stat().st_size < 1024:
+        return False
+    try:
+        with open(file_path, "rb") as f:
+            header = f.read(512)
+        # If it starts with HTML / DOCTYPE, Google served a rate-limit/warning block
+        if b"<!DOCTYPE" in header or b"<html" in header or b"<!doctype" in header:
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def gdown_download_file(file_id: str, destination: Path, cancel_event: asyncio.Event) -> tuple[bool, str]:
-    """Ensures parent folders exist and runs gdown directly with error reporting."""
-    try:
-        # 1. Force directory creation for nested target files
-        destination.parent.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        return False, f"Filesystem directory creation failed: {e}"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp_target = destination.with_suffix(destination.suffix + ".part")
 
-    url = f"https://drive.google.com/uc?id={file_id}"
+    # Use direct sharing view link which triggers gdown's full confirmation scraper
+    urls_to_try = [
+        f"https://drive.google.com/uc?id={file_id}",
+        f"https://drive.google.com/file/d/{file_id}/view?usp=sharing",
+    ]
 
-    try:
-        output = gdown.download(
-            url=url,
-            output=str(destination),
-            quiet=False,
-            fuzzy=True,
-            use_cookies=False
-        )
-
+    for url in urls_to_try:
         if cancel_event.is_set():
-            if destination.exists():
-                destination.unlink()
             return False, "Cancelled by user"
 
-        if output and os.path.exists(output) and os.path.getsize(output) > 0:
-            if Path(output) != destination and os.path.exists(output):
+        try:
+            output = gdown.download(
+                url=url,
+                output=str(temp_target),
+                quiet=False,
+                fuzzy=True,
+                use_cookies=False,
+            )
+
+            if cancel_event.is_set():
+                if temp_target.exists():
+                    temp_target.unlink()
+                return False, "Cancelled by user"
+
+            # Check if gdown wrote to temp_target or to a different output name
+            resolved_file = Path(output) if output else temp_target
+
+            if resolved_file.exists() and is_valid_binary_file(resolved_file):
                 if destination.exists():
                     destination.unlink()
-                os.rename(output, str(destination))
-            return True, "OK"
-        return False, "File empty or blocked by Google Drive rate limits"
-    except Exception as e:
-        return False, str(e)
+                resolved_file.rename(destination)
+                return True, "OK"
+            else:
+                # If Google returned an HTML page (quota exceeded / virus warning)
+                if resolved_file.exists():
+                    try:
+                        content_sample = resolved_file.read_text(errors="ignore")[:300]
+                        resolved_file.unlink()
+                        if "quota" in content_sample.lower():
+                            return False, "Google Drive quota exceeded for this file"
+                        if "virus" in content_sample.lower():
+                            continue # Try sharing URL fallback
+                    except Exception:
+                        if resolved_file.exists():
+                            resolved_file.unlink()
+        except Exception as e:
+            if temp_target.exists():
+                try:
+                    temp_target.unlink()
+                except Exception:
+                    pass
+            continue
+
+    return False, "Google Drive rate limit or virus-warning block (file unretrievable via public token)"
 
 
 async def download_folder_plan(
