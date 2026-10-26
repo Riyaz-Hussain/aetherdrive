@@ -215,22 +215,27 @@ def apply_heuristics(
             "name": sanitized_name,
             "size": size,
             "action": "download",
+            "category": "download",
             "reason": "Ready for download",
         }
 
+        # 1. Skipped Bloat Files
         if (
             matches_wildcards(original_name, active_patterns)
             or matches_wildcards(original_path, active_patterns)
             or matches_wildcards(sanitized_name, active_patterns)
         ):
             plan_entry["action"] = "skip"
-            plan_entry["reason"] = "Matched bloat / exclusion pattern"
+            plan_entry["category"] = "skip_bloat"
+            plan_entry["reason"] = "Matched promotional / bloat pattern"
             plan.append(plan_entry)
             continue
 
+        # 2. Skipped Normal Files (already on disk)
         norm_stem = re.sub(r"[^a-zA-Z0-9]", "", Path(sanitized_name).stem.lower())
         if norm_stem in existing_stems:
             plan_entry["action"] = "skip"
+            plan_entry["category"] = "skip_exists"
             plan_entry["reason"] = "File already exists on local disk"
             plan.append(plan_entry)
             continue
@@ -244,7 +249,6 @@ def download_with_gdown_cli(file_id: str, destination: Path, cancel_event: async
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp_target = destination.with_suffix(destination.suffix + ".part")
 
-    # Pass valid gdown CLI flags only (no --fuzzy)
     cmd = [
         "gdown",
         file_id,
@@ -293,9 +297,9 @@ def download_with_gdown_cli(file_id: str, destination: Path, cancel_event: async
                 return True, f"{size_mb} MB"
             else:
                 temp_target.unlink()
-                return False, f"File too small ({file_size} bytes), likely error payload"
+                return False, f"File too small ({file_size} bytes)"
 
-        return False, stderr.strip() or stdout.strip() or "Unknown gdown failure"
+        return False, stderr.strip() or stdout.strip() or "Download failed"
     except Exception as e:
         if temp_target.exists():
             temp_target.unlink()

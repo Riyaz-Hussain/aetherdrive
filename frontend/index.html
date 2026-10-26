@@ -41,7 +41,6 @@
 <body class="bg-[#090b10] text-slate-100 min-h-screen font-sans antialiased selection:bg-brand-500 selection:text-white"
       x-data="aetherApp()" x-init="initApp()" x-cloak>
 
-  <!-- Navigation Bar -->
   <header class="border-b border-surface-border bg-surface-panel/90 backdrop-blur-md sticky top-0 z-30">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center space-x-3">
@@ -66,10 +65,8 @@
     </div>
   </header>
 
-  <!-- Main Container -->
   <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
 
-    <!-- Configuration Card -->
     <section class="bg-surface-panel border border-surface-border rounded-2xl p-4 sm:p-6 shadow-xl backdrop-blur-xl space-y-5">
       <div>
         <label class="block text-xs font-semibold tracking-wider uppercase text-slate-400 mb-2">Google Drive Folder Link</label>
@@ -130,7 +127,7 @@
       </div>
     </section>
 
-    <!-- Download Progress Panel -->
+    <!-- Progress Panel -->
     <section x-show="isDownloading || downloadFinished" class="bg-surface-panel border border-surface-border rounded-2xl p-4 sm:p-6 shadow-xl space-y-3 sm:space-y-4">
       <div class="flex items-center justify-between">
         <div>
@@ -156,43 +153,54 @@
       </div>
     </section>
 
-    <!-- Interactive Filter Tabs -->
-    <div x-show="plan.length > 0" class="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+    <!-- 4 Interactive Filter Tabs -->
+    <div x-show="plan.length > 0" class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
       <!-- Tab 1: Total Scanned -->
       <button @click="activeTab = 'all'"
               :class="activeTab === 'all' ? 'border-brand-500 ring-2 ring-brand-500/20 bg-surface-card' : 'border-surface-border bg-surface-panel hover:bg-surface-card/60'"
-              class="border rounded-xl p-4 text-left transition-all">
+              class="border rounded-xl p-3.5 sm:p-4 text-left transition-all">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Scanned</span>
+          <span class="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-slate-400">Total Scanned</span>
           <span class="w-2 h-2 rounded-full" :class="activeTab === 'all' ? 'bg-brand-500' : 'bg-transparent'"></span>
         </div>
-        <div class="text-2xl font-bold text-white mt-1" x-text="plan.length"></div>
+        <div class="text-xl sm:text-2xl font-bold text-white mt-1" x-text="plan.length"></div>
       </button>
 
       <!-- Tab 2: Approved For Download -->
       <button @click="activeTab = 'download'"
               :class="activeTab === 'download' ? 'border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-950/20' : 'border-emerald-900/40 bg-surface-panel hover:bg-emerald-950/10'"
-              class="border rounded-xl p-4 text-left transition-all">
+              class="border rounded-xl p-3.5 sm:p-4 text-left transition-all">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-semibold uppercase tracking-wider text-emerald-400">Approved For Download</span>
+          <span class="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-emerald-400">Approved for Download</span>
           <span class="w-2 h-2 rounded-full" :class="activeTab === 'download' ? 'bg-emerald-500' : 'bg-transparent'"></span>
         </div>
-        <div class="text-2xl font-bold text-emerald-300 mt-1" x-text="downloadCount"></div>
+        <div class="text-xl sm:text-2xl font-bold text-emerald-300 mt-1" x-text="downloadCount"></div>
       </button>
 
-      <!-- Tab 3: Skipped / Bloat -->
-      <button @click="activeTab = 'skip'"
-              :class="activeTab === 'skip' ? 'border-amber-500 ring-2 ring-amber-500/20 bg-amber-950/20' : 'border-amber-900/40 bg-surface-panel hover:bg-amber-950/10'"
-              class="border rounded-xl p-4 text-left transition-all">
+      <!-- Tab 3: Skipped Normal Files -->
+      <button @click="activeTab = 'skip_exists'"
+              :class="activeTab === 'skip_exists' ? 'border-sky-500 ring-2 ring-sky-500/20 bg-sky-950/20' : 'border-sky-900/40 bg-surface-panel hover:bg-sky-950/10'"
+              class="border rounded-xl p-3.5 sm:p-4 text-left transition-all">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-semibold uppercase tracking-wider text-amber-400">Skipped / Bloat</span>
-          <span class="w-2 h-2 rounded-full" :class="activeTab === 'skip' ? 'bg-amber-500' : 'bg-transparent'"></span>
+          <span class="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-sky-400">Skipped Normal Files</span>
+          <span class="w-2 h-2 rounded-full" :class="activeTab === 'skip_exists' ? 'bg-sky-500' : 'bg-transparent'"></span>
         </div>
-        <div class="text-2xl font-bold text-amber-300 mt-1" x-text="skippedCount"></div>
+        <div class="text-xl sm:text-2xl font-bold text-sky-300 mt-1" x-text="skippedExistsCount"></div>
+      </button>
+
+      <!-- Tab 4: Skipped Bloat Files -->
+      <button @click="activeTab = 'skip_bloat'"
+              :class="activeTab === 'skip_bloat' ? 'border-amber-500 ring-2 ring-amber-500/20 bg-amber-950/20' : 'border-amber-900/40 bg-surface-panel hover:bg-amber-950/10'"
+              class="border rounded-xl p-3.5 sm:p-4 text-left transition-all">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-amber-400">Skipped Bloat Files</span>
+          <span class="w-2 h-2 rounded-full" :class="activeTab === 'skip_bloat' ? 'bg-amber-500' : 'bg-transparent'"></span>
+        </div>
+        <div class="text-xl sm:text-2xl font-bold text-amber-300 mt-1" x-text="skippedBloatCount"></div>
       </button>
     </div>
 
-    <!-- Execution Plan Table (Filtered by Active Tab) -->
+    <!-- Execution Plan Table -->
     <section x-show="plan.length > 0" class="bg-surface-panel border border-surface-border rounded-2xl overflow-hidden shadow-xl">
       <div class="px-4 sm:px-6 py-3.5 border-b border-surface-border flex items-center justify-between">
         <h3 class="text-xs sm:text-sm font-semibold uppercase tracking-wider text-slate-300">
@@ -213,15 +221,23 @@
           </thead>
           <tbody class="divide-y divide-surface-border text-slate-300 font-mono">
             <template x-for="item in filteredPlan" :key="item.id">
-              <tr :class="item.action === 'download' ? 'bg-emerald-950/10 hover:bg-emerald-950/20' : 'bg-surface-panel hover:bg-surface-card/40'">
+              <tr :class="{
+                'bg-emerald-950/10 hover:bg-emerald-950/20': item.category === 'download',
+                'bg-sky-950/10 hover:bg-sky-950/20': item.category === 'skip_exists',
+                'bg-amber-950/10 hover:bg-amber-950/20': item.category === 'skip_bloat'
+              }">
                 <td class="py-2.5 px-3 sm:px-4 whitespace-nowrap">
-                  <span x-show="item.action === 'download'" 
+                  <span x-show="item.category === 'download'" 
                         class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
                     DOWNLOAD
                   </span>
-                  <span x-show="item.action === 'skip'" 
+                  <span x-show="item.category === 'skip_exists'" 
+                        class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/10 border border-sky-500/30 text-sky-400">
+                    ON DISK
+                  </span>
+                  <span x-show="item.category === 'skip_bloat'" 
                         class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 border border-amber-500/30 text-amber-400">
-                    SKIPPED
+                    BLOAT
                   </span>
                 </td>
                 <td class="py-2.5 px-3 sm:px-4 font-semibold text-slate-200 break-all" x-text="item.sanitized_path"></td>
@@ -234,7 +250,7 @@
       </div>
     </section>
 
-    <!-- Terminal Activity Logs -->
+    <!-- Terminal Console Logs -->
     <section class="bg-surface-panel border border-surface-border rounded-2xl overflow-hidden shadow-xl">
       <div class="px-4 sm:px-6 py-3 border-b border-surface-border bg-surface-card flex items-center justify-between">
         <div class="flex items-center space-x-2">
@@ -342,19 +358,24 @@
         activeTab: 'all',
 
         get downloadCount() {
-          return this.plan.filter(i => i.action === 'download').length;
+          return this.plan.filter(i => i.category === 'download').length;
         },
-        get skippedCount() {
-          return this.plan.filter(i => i.action === 'skip').length;
+        get skippedExistsCount() {
+          return this.plan.filter(i => i.category === 'skip_exists').length;
+        },
+        get skippedBloatCount() {
+          return this.plan.filter(i => i.category === 'skip_bloat').length;
         },
         get filteredPlan() {
-          if (this.activeTab === 'download') return this.plan.filter(i => i.action === 'download');
-          if (this.activeTab === 'skip') return this.plan.filter(i => i.action === 'skip');
+          if (this.activeTab === 'download') return this.plan.filter(i => i.category === 'download');
+          if (this.activeTab === 'skip_exists') return this.plan.filter(i => i.category === 'skip_exists');
+          if (this.activeTab === 'skip_bloat') return this.plan.filter(i => i.category === 'skip_bloat');
           return this.plan;
         },
         get tabTitle() {
-          if (this.activeTab === 'download') return 'Approved For Download';
-          if (this.activeTab === 'skip') return 'Skipped / Bloat Items';
+          if (this.activeTab === 'download') return 'Approved for Download';
+          if (this.activeTab === 'skip_exists') return 'Skipped Normal Files (Already on Disk)';
+          if (this.activeTab === 'skip_bloat') return 'Skipped Bloat Files (Promotional / Spam)';
           return 'All Scanned Items';
         },
 
@@ -429,7 +450,7 @@
               throw new Error(err.detail || 'Failed to inspect link.');
             }
             this.plan = await res.json();
-            this.addLog(`Plan generated: ${this.downloadCount} to download, ${this.skippedCount} skipped.`);
+            this.addLog(`Plan generated: ${this.downloadCount} to download, ${this.skippedExistsCount} on disk, ${this.skippedBloatCount} bloat.`);
           } catch (e) {
             this.addLog(`Error: ${e.message}`);
           } finally {
