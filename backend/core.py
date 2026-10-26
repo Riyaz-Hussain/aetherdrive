@@ -2,6 +2,7 @@ import os
 import re
 import fnmatch
 import asyncio
+import subprocess
 import urllib.request
 import urllib.parse
 from pathlib import Path
@@ -180,8 +181,8 @@ def get_existing_stems_on_disk(download_dir: Path) -> set:
     if not download_dir.exists():
         return stems
     for path in download_dir.rglob("*"):
-        # Ignore empty/dummy or HTML error files under 50KB
-        if path.is_file() and path.stat().st_size > 50000:
+        # Real files only (ignore sub-1MB placeholders)
+        if path.is_file() and path.stat().st_size > 1024 * 1024:
             norm = re.sub(r"[^a-zA-Z0-9]", "", path.stem.lower())
             if norm:
                 stems.add(norm)
@@ -240,79 +241,66 @@ def apply_heuristics(
     return plan
 
 
-def is_valid_binary_file(file_path: Path) -> bool:
-    """Verifies the downloaded file is real binary data and not a Google Drive HTML error page."""
-    if not file_path.exists() or file_path.stat().st_size < 1024:
-        return False
-    try:
-        with open(file_path, "rb") as f:
-            header = f.read(512)
-        # If it starts with HTML / DOCTYPE, Google served a rate-limit/warning block
-        if b"<!DOCTYPE" in header or b"<html" in header or b"<!doctype" in header:
-            return False
-        return True
-    except Exception:
-        return False
-
-
-def gdown_download_file(file_id: str, destination: Path, cancel_event: asyncio.Event) -> tuple[bool, str]:
+def download_with_gdown_cli(file_id: str, destination: Path, cancel_event: asyncio.Event) -> tuple[bool, str]:
+    """Invokes the gdown CLI binary directly via subprocess matching shell execution."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp_target = destination.with_suffix(destination.suffix + ".part")
 
-    # Use direct sharing view link which triggers gdown's full confirmation scraper
-    urls_to_try = [
+    cmd = [
+        "gdown",
         f"https://drive.google.com/uc?id={file_id}",
-        f"https://drive.google.com/file/d/{file_id}/view?usp=sharing",
+        "-O", str(temp_target),
+        "--fuzzy"
     ]
 
-    for url in urls_to_try:
-        if cancel_event.is_set():
-            return False, "Cancelled by user"
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
 
-        try:
-            output = gdown.download(
-                url=url,
-                output=str(temp_target),
-                quiet=False,
-                fuzzy=True,
-                use_cookies=False,
-            )
-
+        while proc.poll() is None:
             if cancel_event.is_set():
+                proc.terminate()
                 if temp_target.exists():
                     temp_target.unlink()
                 return False, "Cancelled by user"
+            import time
+            time.sleep(0.5)
 
-            # Check if gdown wrote to temp_target or to a different output name
-            resolved_file = Path(output) if output else temp_target
+        stdout, stderr = proc.communicate()
 
-            if resolved_file.exists() and is_valid_binary_file(resolved_file):
+        if cancel_event.is_set():
+            if temp_target.exists():
+                temp_target.unlink()
+            return False, "Cancelled by user"
+
+        if temp_target.exists():
+            file_size = temp_target.stat().st_size
+            # Check if file is non-empty and not a tiny HTML text block
+            if file_size > 50000:
+                with open(temp_target, "rb") as f:
+                    header = f.read(256)
+                if b"<html" in header or b"<!DOCTYPE" in header or b"<!doctype" in header:
+                    temp_target.unlink()
+                    return False, "Google Drive served HTML rate limit or quota page"
+
                 if destination.exists():
                     destination.unlink()
-                resolved_file.rename(destination)
-                return True, "OK"
+                temp_target.rename(destination)
+                size_mb = round(file_size / (1024 * 1024), 2)
+                return True, f"{size_mb} MB"
             else:
-                # If Google returned an HTML page (quota exceeded / virus warning)
-                if resolved_file.exists():
-                    try:
-                        content_sample = resolved_file.read_text(errors="ignore")[:300]
-                        resolved_file.unlink()
-                        if "quota" in content_sample.lower():
-                            return False, "Google Drive quota exceeded for this file"
-                        if "virus" in content_sample.lower():
-                            continue # Try sharing URL fallback
-                    except Exception:
-                        if resolved_file.exists():
-                            resolved_file.unlink()
-        except Exception as e:
-            if temp_target.exists():
-                try:
-                    temp_target.unlink()
-                except Exception:
-                    pass
-            continue
+                temp_target.unlink()
+                return False, f"File too small ({file_size} bytes), likely error payload"
 
-    return False, "Google Drive rate limit or virus-warning block (file unretrievable via public token)"
+        return False, stderr.strip() or stdout.strip() or "Unknown gdown failure"
+    except Exception as e:
+        if temp_target.exists():
+            temp_target.unlink()
+        return False, str(e)
 
 
 async def download_folder_plan(
@@ -328,19 +316,7 @@ async def download_folder_plan(
         return False, "Missing file ID"
 
     loop = asyncio.get_event_loop()
-    task = loop.run_in_executor(None, gdown_download_file, file_id, target_path, cancel_event)
-
-    while not task.done():
-        if cancel_event.is_set():
-            if target_path.exists():
-                try:
-                    target_path.unlink()
-                except Exception:
-                    pass
-            return False, "Cancelled"
-        await asyncio.sleep(0.4)
-
-    return await task
+    return await loop.run_in_executor(None, download_with_gdown_cli, file_id, target_path, cancel_event)
 
 
 def repair_extensions(file_path: Path) -> Path:

@@ -119,7 +119,6 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str):
                 break
 
             target_path = DOWNLOAD_DIR / item["sanitized_path"]
-            target_path.parent.mkdir(parents=True, exist_ok=True)
 
             await broadcast_event({
                 "type": "progress",
@@ -129,7 +128,7 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str):
                 "percentage": int(((downloaded) / max(total, 1)) * 100)
             })
 
-            success = await download_folder_plan(item, target_path, cancel_event)
+            success, detail = await download_folder_plan(item, target_path, cancel_event)
 
             if cancel_event.is_set():
                 status = "cancelled"
@@ -140,15 +139,14 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str):
                 downloaded += 1
                 await broadcast_event({
                     "type": "log",
-                    "message": f"✓ Saved & verified: {item['sanitized_path']}"
+                    "message": f"✓ Saved: {item['sanitized_path']} ({detail})"
                 })
             else:
                 await broadcast_event({
                     "type": "log",
-                    "message": f"❌ Failed to download file: {item['sanitized_path']}"
+                    "message": f"❌ Failed: {item['sanitized_path']} | Reason: {detail}"
                 })
 
-        # Determine real operational status
         if status != "cancelled":
             if total > 0 and downloaded == 0:
                 status = "failed"
