@@ -22,26 +22,23 @@ MAGIC_BYTE_SIGNATURES = [
     (0, b"ID3", ".mp3"),
 ]
 
+# Universal promotional bloat patterns - ONLY skip entire files if they match these:
 DEFAULT_EXCLUDE_PATTERNS = [
     "*500$*",
     "*5000$*",
     "*all in one vip*",
-    "*bundle*",
     "*free course*",
     "*free courses*",
     "*join telegram*",
     "*join whatsapp*",
     "*vip access*",
-    "*bonus*",
     "*reels bundle*",
     "*giveaway*",
     "*crack*",
     "*keygen*",
-    "*channel*",
     "*content owner*",
     "*owner channel*",
     "*binus*",
-    "*ahm7tech*",
 ]
 
 URL_DOMAIN_PATTERN = re.compile(
@@ -49,6 +46,7 @@ URL_DOMAIN_PATTERN = re.compile(
     re.IGNORECASE,
 )
 SOCIAL_HANDLE_PATTERN = re.compile(r"@[a-zA-Z0-9_]+", re.IGNORECASE)
+WATERMARK_WORDS = re.compile(r"\b(ahm7tech|careership|google|telegram)\b", re.IGNORECASE)
 
 
 def extract_drive_folder_id(url: str) -> Optional[str]:
@@ -131,20 +129,22 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
 
 
 def sanitize_path(raw_path: str) -> str:
-    """Strips URLs, handles, invalid filesystem chars (|, <, >, :, ?, *), and duplicate extensions."""
+    """Strips URLs, handles, watermark words, invalid chars, and preserves clean media filenames."""
     parts = raw_path.replace("\\", "/").strip("/").split("/")
     cleaned_parts = []
 
     for part in parts:
         s = URL_DOMAIN_PATTERN.sub("", part)
         s = SOCIAL_HANDLE_PATTERN.sub("", s)
-        # Strip promotion pipe brackets like |google>|ahm7tech|or||
+        # Strip promotional tags and brackets
         s = re.sub(r"\|.*?\|", "", s)
         s = re.sub(r"\[.*?\]", "", s)
-        s = re.sub(r"\(.*?\.(?:com\vert{}org\vert{}net\vert{}app\vert{}io\vert{}xyz)\)", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\(.*?\.(?:com|org|net|app|io|xyz)\)", "", s, flags=re.IGNORECASE)
+        # Strip known watermark tags instead of dropping the entire file
+        s = WATERMARK_WORDS.sub("", s)
         # Strip illegal filesystem characters for Linux/Docker
         s = re.sub(r'[\\/*?:"<>|]', "", s)
-        # Strip emoji / unicode art
+        # Strip emojis
         s = s.encode("ascii", "ignore").decode("ascii")
         # Collapse whitespace
         s = re.sub(r"[_\s]+", " ", s)
@@ -160,7 +160,7 @@ def sanitize_path(raw_path: str) -> str:
             collapsed.append(part)
 
     result = "/".join(collapsed)
-    # Fix accidental double extensions like .mp4.mp4
+    # Fix accidental double extensions (.mp4.mp4)
     result = re.sub(r"(\.[a-zA-Z0-9]{2,5})\1+$", r"\1", result)
     return result
 
@@ -221,7 +221,7 @@ def apply_heuristics(
             "reason": "Ready for download",
         }
 
-        # Check bloat pattern exclusions
+        # 1. Skip ONLY if it matches true bloat/spam rules
         if (
             matches_wildcards(original_name, active_patterns)
             or matches_wildcards(original_path, active_patterns)
@@ -232,7 +232,7 @@ def apply_heuristics(
             plan.append(plan_entry)
             continue
 
-        # Check existing disk sync
+        # 2. Check if the file is already on disk using normalized stem matching
         norm_stem = re.sub(r"[^a-zA-Z0-9]", "", Path(sanitized_name).stem.lower())
         if norm_stem in existing_stems:
             plan_entry["action"] = "skip"
