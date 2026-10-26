@@ -66,7 +66,6 @@ def extract_drive_folder_id(url: str) -> Optional[str]:
 
 
 def fetch_folder_root_name(folder_id: str) -> str:
-    """Retrieves and cleanly decodes top-level Google Drive folder title (stripping HTML entities)."""
     try:
         url = f"https://drive.google.com/drive/folders/{folder_id}"
         req = urllib.request.Request(
@@ -78,7 +77,6 @@ def fetch_folder_root_name(folder_id: str) -> str:
         match = re.search(r"<title>([^<]+?)(?:\s*-\s*Google Drive)?</title>", page_html, re.IGNORECASE)
         if match:
             raw_title = html.unescape(match.group(1)).strip()
-            # Strip quotes and html residue
             raw_title = re.sub(r'["\']', '', raw_title)
             if raw_title and raw_title.lower() != "google drive":
                 return sanitize_path(raw_title)
@@ -169,7 +167,6 @@ async def parse_drive_folder(folder_url: str) -> List[Dict[str, Any]]:
 
 
 def sanitize_path(raw_path: str) -> str:
-    # First decode any HTML entity leakage like &quot; &amp;
     raw_path = html.unescape(raw_path)
     parts = raw_path.replace("\\", "/").strip("/").split("/")
     cleaned_parts = []
@@ -180,9 +177,8 @@ def sanitize_path(raw_path: str) -> str:
         s = SOCIAL_HANDLE_PATTERN.sub("", s)
         s = re.sub(r"\|.*?\|", "", s)
         s = re.sub(r"\[.*?\]", "", s)
-        s = re.sub(r"\(.*?\.(?:com|org|net|app|io|xyz)\)", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\(.*?\.(?:com\vert{}org\vert{}net\vert{}app\vert{}io\vert{}xyz)\)", "", s, flags=re.IGNORECASE)
         s = WATERMARK_WORDS.sub("", s)
-        # Strip illegal characters and rogue entity residues
         s = re.sub(r'[\\/*?:"<>|&;]', "", s)
         s = s.encode("ascii", "ignore").decode("ascii")
         s = re.sub(r"[_\s]+", " ", s)
@@ -215,18 +211,25 @@ def matches_wildcards(target: str, patterns: List[str]) -> bool:
     return False
 
 
-def get_existing_stems_on_disk(download_dir: Path) -> set:
-    """Recursively collects normalized stems from ALL files on disk (case/special-char insensitive)."""
-    stems = set()
-    if not download_dir.exists():
-        return stems
-    for path in download_dir.rglob("*"):
-        if path.is_file() and path.stat().st_size > 0 and not path.name.endswith(".part"):
-            # Normalize stem: lowercase alphanumeric only
-            norm = re.sub(r"[^a-zA-Z0-9]", "", path.stem.lower())
-            if norm:
-                stems.add(norm)
-    return stems
+def is_file_already_on_disk(download_dir: Path, sanitized_rel_path: str) -> bool:
+    """Accurately checks whether the file exists inside its designated enclosing directory."""
+    target_file = download_dir / sanitized_rel_path
+    
+    # Direct exact path check
+    if target_file.exists() and target_file.is_file() and target_file.stat().st_size > 0:
+        return True
+
+    # Check same directory for matching normalized stem
+    parent_folder = target_file.parent
+    if parent_folder.exists() and parent_folder.is_dir():
+        target_norm = re.sub(r"[^a-zA-Z0-9]", "", target_file.stem.lower())
+        for f in parent_folder.iterdir():
+            if f.is_file() and f.stat().st_size > 0 and not f.name.endswith(".part"):
+                f_norm = re.sub(r"[^a-zA-Z0-9]", "", f.stem.lower())
+                if f_norm == target_norm:
+                    return True
+
+    return False
 
 
 def apply_heuristics(
@@ -237,7 +240,6 @@ def apply_heuristics(
     custom_patterns = [p.strip() for p in (exclusions or "").split(",") if p.strip()]
     active_patterns = list(set(DEFAULT_EXCLUDE_PATTERNS + custom_patterns))
 
-    existing_stems = get_existing_stems_on_disk(download_dir)
     plan = []
 
     for item in raw_items:
@@ -272,14 +274,11 @@ def apply_heuristics(
             plan.append(plan_entry)
             continue
 
-        # 2. Check if file exists on disk
-        clean_name_stem = COPY_PREFIX_PATTERN.sub("", Path(sanitized_name).stem)
-        norm_stem = re.sub(r"[^a-zA-Z0-9]", "", clean_name_stem.lower())
-
-        if norm_stem in existing_stems:
+        # 2. Check if file genuinely exists inside its parent course directory
+        if is_file_already_on_disk(download_dir, sanitized_rel_path):
             plan_entry["action"] = "skip"
             plan_entry["category"] = "skip_exists"
-            plan_entry["reason"] = "File already exists on local disk"
+            plan_entry["reason"] = "File already exists in destination folder"
             plan.append(plan_entry)
             continue
 
@@ -292,9 +291,12 @@ def download_with_gdown_cli(file_id: str, destination: Path, cancel_event: async
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp_target = destination.with_suffix(destination.suffix + ".part")
 
+    # Pass the full sharing file URL so gdown bypasses restricted file endpoint errors
+    url = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
+
     cmd = [
         "gdown",
-        file_id,
+        url,
         "-O", str(temp_target),
         "--no-cookies",
         "--continue"

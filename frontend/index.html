@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>AetherDrive - Cloud Downloader & Sanitizer</title>
   
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='fav-grad' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%236366f1'/%3E%3Cstop offset='50%25' stop-color='%23818cf8'/%3E%3Cstop offset='100%25' stop-color='%2306b6d4'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='%230d111c'/%3E%3Cpath d='M8 18a4 4 0 0 1 7.7-1.5A3.5 3.5 0 0 1 22 17a3.5 3.5 0 0 1-1 6.8H8A4 4 0 0 1 8 18z' fill='none' stroke='url(%23fav-grad)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M16 14v8m-3-3l3 3 3-3' fill='none' stroke='%2338bdf8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='bg' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%230f1422'/%3E%3Cstop offset='100%25' stop-color='%2306080e'/%3E%3C/linearGradient%3E%3ClinearGradient id='aether' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23a855f7'/%3E%3Cstop offset='50%25' stop-color='%236366f1'/%3E%3Cstop offset='100%25' stop-color='%2306b6d4'/%3E%3C/linearGradient%3E%3Cfilter id='glow'%3E%3CfeGaussianBlur stdDeviation='1.5' result='coloredBlur'/%3E%3CfeMerge%3E%3CfeMergeNode in='coloredBlur'/%3E%3CfeMergeNode in='SourceGraphic'/%3E%3C/feMerge%3E%3C/filter%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url(%23bg)' stroke='%23242c40' stroke-width='1.5'/%3E%3Cpath d='M32 10L50 20V42L32 52L14 42V20L32 10Z' fill='none' stroke='url(%23aether)' stroke-width='1.5' opacity='0.4'/%3E%3Cpath d='M32 18L44 25V39L32 46L20 39V25L32 18Z' fill='none' stroke='url(%23aether)' stroke-width='2.5' filter='url(%23glow)' stroke-linejoin='round'/%3E%3Cpath d='M32 24V40M25 33L32 40L39 33' fill='none' stroke='%2338bdf8' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' filter='url(%23glow)'/%3E%3Ccircle cx='32' cy='24' r='2' fill='%23ffffff'/%3E%3C/svg%3E" />
 
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -48,39 +48,55 @@
   <header class="border-b border-surface-border bg-surface-panel/90 backdrop-blur-md sticky top-0 z-30">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center space-x-3.5">
-        <div class="relative group">
-          <div class="absolute -inset-1 bg-gradient-to-r from-indigo-500 via-brand-500 to-cyan-400 rounded-xl blur opacity-30 group-hover:opacity-75 transition duration-300"></div>
-          <div class="relative w-10 h-10 rounded-xl bg-surface-card border border-brand-500/30 flex items-center justify-center shadow-lg shadow-brand-500/10 overflow-hidden">
-            <svg class="w-6 h-6 transform group-hover:scale-105 transition-transform duration-300" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <div class="relative group cursor-pointer">
+          <div class="absolute -inset-1.5 bg-gradient-to-r from-purple-600 via-brand-500 to-cyan-400 rounded-2xl blur-md opacity-40 group-hover:opacity-85 transition duration-500"></div>
+          
+          <div class="relative w-11 h-11 rounded-2xl bg-gradient-to-b from-[#131929] to-[#0a0d17] border border-cyan-500/30 flex items-center justify-center shadow-2xl overflow-hidden ring-1 ring-white/10">
+            <svg class="w-7 h-7 transform group-hover:scale-110 group-hover:rotate-3 transition duration-500" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
               <defs>
-                <linearGradient id="aetherCloudGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#818cf8"/>
-                  <stop offset="60%" stop-color="#6366f1"/>
+                <linearGradient id="cyberAether" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#c084fc"/>
+                  <stop offset="45%" stop-color="#6366f1"/>
                   <stop offset="100%" stop-color="#06b6d4"/>
                 </linearGradient>
-                <linearGradient id="aetherArrowGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <linearGradient id="beamGrad" x1="0%" y1="0%" x2="0%" y2="100%">
                   <stop offset="0%" stop-color="#ffffff"/>
                   <stop offset="100%" stop-color="#38bdf8"/>
                 </linearGradient>
+                <radialGradient id="singularityGlow" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stop-color="#6366f1" stop-opacity="0.6"/>
+                  <stop offset="100%" stop-color="#6366f1" stop-opacity="0"/>
+                </radialGradient>
               </defs>
-              <circle cx="16" cy="16" r="14" stroke="url(#aetherCloudGrad)" stroke-width="1" stroke-dasharray="2 3" opacity="0.4" />
-              <path d="M9 19a4 4 0 0 1 7.7-1.5A3.5 3.5 0 0 1 23 18a3.5 3.5 0 0 1-1 6.8H9A4 4 0 0 1 9 19z" 
-                    stroke="url(#aetherCloudGrad)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M16 13v9m-3.5-3.5L16 22l3.5-3.5" 
-                    stroke="url(#aetherArrowGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+
+              <circle cx="32" cy="32" r="18" fill="url(#singularityGlow)" />
+              <circle cx="32" cy="32" r="26" stroke="url(#cyberAether)" stroke-width="1.2" stroke-dasharray="3 4" opacity="0.45" />
+              <circle cx="32" cy="6" r="1.5" fill="#38bdf8" />
+              <circle cx="58" cy="32" r="1.5" fill="#a855f7" />
+              <circle cx="32" cy="58" r="1.5" fill="#06b6d4" />
+              <circle cx="6" cy="32" r="1.5" fill="#c084fc" />
+
+              <path d="M32 15L47 23.5V40.5L32 49L17 40.5V23.5L32 15Z" 
+                    stroke="url(#cyberAether)" stroke-width="2.2" stroke-linejoin="round" />
+              <path d="M32 22V42M24 34L32 42L40 34" 
+                    stroke="url(#beamGrad)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+              <circle cx="32" cy="22" r="2" fill="#ffffff" />
             </svg>
           </div>
         </div>
 
         <div>
           <div class="flex items-center space-x-2">
-            <span class="text-base sm:text-lg font-bold tracking-tight text-white">Aether<span class="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 to-cyan-400">Drive</span></span>
-            <span class="text-[10px] font-mono uppercase bg-brand-500/10 border border-brand-500/20 text-brand-400 px-2 py-0.5 rounded-full font-semibold">v1.0.0</span>
+            <span class="text-base sm:text-lg font-extrabold tracking-tight text-white tracking-wide">
+              AETHER<span class="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 via-indigo-300 to-cyan-400">DRIVE</span>
+            </span>
+            <span class="text-[10px] font-mono uppercase bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 px-2 py-0.5 rounded-full font-bold shadow-sm">
+              v1.0.0
+            </span>
           </div>
         </div>
       </div>
 
-      <!-- Action Buttons: Exclusions Settings & History -->
       <div class="flex items-center space-x-2.5">
         <button @click="settingsModalOpen = true"
                 class="flex items-center space-x-1.5 text-xs sm:text-sm font-medium text-slate-300 hover:text-white px-3 py-1.5 rounded-lg border border-surface-border bg-surface-card hover:bg-surface-border transition">
@@ -143,12 +159,13 @@
         <div class="flex items-center gap-2 w-full sm:w-auto">
           <button x-show="plan.length > 0 && !isDownloading" 
                   @click="executeDownload()" 
-                  :disabled="downloadCount === 0"
-                  class="w-full sm:w-auto flex items-center justify-center space-x-2 px-5 py-2.5 sm:py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-semibold text-xs sm:text-sm text-white shadow-lg shadow-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition">
+                  :disabled="selectedIds.length === 0 && downloadCount === 0"
+                  :class="selectedIds.length > 0 ? 'bg-cyan-600 hover:bg-cyan-500 shadow-cyan-500/20' : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-500/20'"
+                  class="w-full sm:w-auto flex items-center justify-center space-x-2 px-5 py-2.5 sm:py-3 rounded-xl font-semibold text-xs sm:text-sm text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed transition">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
             </svg>
-            <span>Execute Download (<span x-text="downloadCount"></span> files)</span>
+            <span x-text="selectedIds.length > 0 ? `Download Selected (${selectedIds.length} files)` : `Execute Download (${downloadCount} files)`"></span>
           </button>
 
           <button x-show="isDownloading" 
@@ -232,32 +249,59 @@
       </button>
     </div>
 
-    <!-- Table Section -->
+    <!-- Table Section with Checkboxes -->
     <section x-show="plan.length > 0" class="bg-surface-panel border border-surface-border rounded-2xl overflow-hidden shadow-xl">
-      <div class="px-4 sm:px-6 py-3.5 border-b border-surface-border flex items-center justify-between">
-        <h3 class="text-xs sm:text-sm font-semibold uppercase tracking-wider text-slate-300">
-          Showing: <span class="text-brand-400 font-bold" x-text="tabTitle"></span>
-        </h3>
-        <span class="text-[11px] font-mono text-slate-500" x-text="`${filteredPlan.length} items`"></span>
+      <div class="px-4 sm:px-6 py-3.5 border-b border-surface-border flex items-center justify-between flex-wrap gap-2">
+        <div class="flex items-center space-x-2">
+          <h3 class="text-xs sm:text-sm font-semibold uppercase tracking-wider text-slate-300">
+            Showing: <span class="text-brand-400 font-bold" x-text="tabTitle"></span>
+          </h3>
+          <span class="text-[11px] font-mono text-slate-500" x-text="`(${filteredPlan.length} items)`"></span>
+        </div>
+
+        <div class="flex items-center space-x-3 text-xs">
+          <template x-if="selectedIds.length > 0">
+            <div class="flex items-center space-x-2">
+              <span class="font-mono text-cyan-400 font-semibold" x-text="`${selectedIds.length} selected for test`"></span>
+              <button @click="selectedIds = []" class="text-slate-400 hover:text-white underline text-[11px]">Clear</button>
+            </div>
+          </template>
+        </div>
       </div>
 
       <div class="overflow-x-auto max-h-96">
         <table class="w-full text-left text-xs border-collapse">
-          <thead class="bg-surface-card sticky top-0 border-b border-surface-border text-slate-400 font-mono uppercase">
+          <thead class="bg-surface-card sticky top-0 border-b border-surface-border text-slate-400 font-mono uppercase z-10">
             <tr>
+              <th class="py-2.5 px-3 sm:px-4 w-10 text-center">
+                <input type="checkbox" 
+                       :checked="isAllVisibleSelected" 
+                       @change="toggleSelectAllVisible()"
+                       class="rounded border-slate-700 bg-surface-panel text-brand-500 focus:ring-brand-500 focus:ring-offset-0 cursor-pointer" />
+              </th>
               <th class="py-2.5 px-3 sm:px-4">Status</th>
               <th class="py-2.5 px-3 sm:px-4 min-w-[200px]">Clean File Path</th>
               <th class="py-2.5 px-3 sm:px-4 min-w-[200px] hidden md:table-cell">Remote Source Path</th>
               <th class="py-2.5 px-3 sm:px-4">Reason / Rule</th>
+              <th class="py-2.5 px-3 sm:px-4 text-right">Action</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-surface-border text-slate-300 font-mono">
             <template x-for="item in filteredPlan" :key="item.id">
               <tr :class="{
-                'bg-emerald-950/10 hover:bg-emerald-950/20': item.category === 'download',
-                'bg-sky-950/10 hover:bg-sky-950/20': item.category === 'skip_exists',
-                'bg-amber-950/10 hover:bg-amber-950/20': item.category === 'skip_bloat'
+                'bg-cyan-950/30': isSelected(item.id),
+                'bg-emerald-950/10 hover:bg-emerald-950/20': !isSelected(item.id) && item.category === 'download',
+                'bg-sky-950/10 hover:bg-sky-950/20': !isSelected(item.id) && item.category === 'skip_exists',
+                'bg-amber-950/10 hover:bg-amber-950/20': !isSelected(item.id) && item.category === 'skip_bloat'
               }">
+                <td class="py-2.5 px-3 sm:px-4 text-center">
+                  <input type="checkbox" 
+                         :value="item.id" 
+                         :checked="isSelected(item.id)"
+                         @change="toggleSelection(item.id)"
+                         class="rounded border-slate-700 bg-surface-panel text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0 cursor-pointer" />
+                </td>
+
                 <td class="py-2.5 px-3 sm:px-4 whitespace-nowrap">
                   <span x-show="item.category === 'download'" 
                         class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
@@ -275,6 +319,14 @@
                 <td class="py-2.5 px-3 sm:px-4 font-semibold text-slate-200 break-all" x-text="item.sanitized_path"></td>
                 <td class="py-2.5 px-3 sm:px-4 text-slate-500 truncate max-w-xs hidden md:table-cell" x-text="item.original_path"></td>
                 <td class="py-2.5 px-3 sm:px-4 text-slate-400 whitespace-nowrap" x-text="item.reason"></td>
+
+                <td class="py-2.5 px-3 sm:px-4 text-right whitespace-nowrap">
+                  <button @click="downloadSingleItem(item)" 
+                          :disabled="isDownloading"
+                          class="px-2.5 py-1 rounded-lg bg-surface-card hover:bg-cyan-600/30 border border-surface-border hover:border-cyan-500/50 text-cyan-400 text-[11px] font-sans font-semibold transition disabled:opacity-40">
+                    Download
+                  </button>
+                </td>
               </tr>
             </template>
           </tbody>
@@ -437,6 +489,7 @@
         isDownloading: false,
         downloadFinished: false,
         plan: [],
+        selectedIds: [],
         logs: [],
         currentFile: '',
         progressPercentage: 0,
@@ -471,11 +524,36 @@
           if (this.activeTab === 'skip_bloat') return 'Skipped Bloat Files (Promotional / Spam)';
           return 'All Scanned Items';
         },
+        get isAllVisibleSelected() {
+          const visible = this.filteredPlan;
+          return visible.length > 0 && visible.every(item => this.selectedIds.includes(item.id));
+        },
 
         initApp() {
           this.connectEventSource();
           this.fetchHistory();
           this.fetchSavedExclusions();
+        },
+
+        isSelected(id) {
+          return this.selectedIds.includes(id);
+        },
+
+        toggleSelection(id) {
+          if (this.isSelected(id)) {
+            this.selectedIds = this.selectedIds.filter(x => x !== id);
+          } else {
+            this.selectedIds.push(id);
+          }
+        },
+
+        toggleSelectAllVisible() {
+          const visibleIds = this.filteredPlan.map(i => i.id);
+          if (this.isAllVisibleSelected) {
+            this.selectedIds = this.selectedIds.filter(id => !visibleIds.includes(id));
+          } else {
+            this.selectedIds = Array.from(new Set([...this.selectedIds, ...visibleIds]));
+          }
         },
 
         connectEventSource() {
@@ -569,6 +647,7 @@
         async inspectFolder() {
           this.isScanning = true;
           this.plan = [];
+          this.selectedIds = [];
           this.activeTab = 'all';
           this.addLog(`Inspecting remote directory: ${this.folderUrl}`);
           try {
@@ -594,19 +673,48 @@
         },
 
         async executeDownload() {
-          if (this.downloadCount === 0) return;
-          this.addLog('Starting background download worker...');
+          let itemsToDownload = [];
+
+          if (this.selectedIds.length > 0) {
+            itemsToDownload = this.plan
+              .filter(i => this.selectedIds.includes(i.id))
+              .map(i => ({ ...i, action: 'download' }));
+            this.addLog(`Executing test download for ${itemsToDownload.length} selected files...`);
+          } else {
+            itemsToDownload = this.plan.filter(i => i.action === 'download');
+            if (itemsToDownload.length === 0) return;
+            this.addLog(`Starting background download for all ${itemsToDownload.length} approved items...`);
+          }
+
           try {
             await fetch('/api/download', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                plan: this.plan,
+                plan: itemsToDownload,
                 folder_url: this.folderUrl
               })
             });
           } catch (e) {
             this.addLog(`Failed to start download: ${e.message}`);
+          }
+        },
+
+        async downloadSingleItem(item) {
+          if (this.isDownloading) return;
+          this.addLog(`Initiating single-file test download: ${item.sanitized_path}`);
+          const singlePlan = [{ ...item, action: 'download' }];
+          try {
+            await fetch('/api/download', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                plan: singlePlan,
+                folder_url: this.folderUrl
+              })
+            });
+          } catch (e) {
+            this.addLog(`Failed to start single download: ${e.message}`);
           }
         },
 
