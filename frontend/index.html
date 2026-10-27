@@ -506,7 +506,7 @@
   <div x-show="historyDrawerOpen" class="fixed inset-0 z-50 overflow-hidden" role="dialog" aria-modal="true">
     <div class="absolute inset-0 bg-black/70 backdrop-blur-sm transition-opacity" @click="historyDrawerOpen = false"></div>
     <div class="fixed inset-y-0 right-0 max-w-full flex pl-6 sm:pl-10">
-      <div class="w-screen max-w-md bg-surface-panel border-l border-surface-border flex flex-col shadow-2xl">
+      <div class="w-screen max-w-md bg-surface-panel border-l border-surface-border flex-col shadow-2xl flex">
         <div class="p-4 sm:p-6 border-b border-surface-border flex items-center justify-between">
           <h2 class="text-base font-bold text-white">Execution Audit Log</h2>
           <button @click="historyDrawerOpen = false" class="text-slate-400 hover:text-white p-1">
@@ -600,7 +600,6 @@
         activeTab: 'all',
         evtSource: null,
 
-        // Persistent Banner State (no auto-dismiss timer)
         showResumeBanner: false,
 
         get downloadCount() {
@@ -670,7 +669,6 @@
             if (res.ok) {
               const state = await res.json();
 
-              // Case A: Transfer is actively in progress
               if (state.is_downloading) {
                 this.isDownloading = true;
                 this.downloadFinished = false;
@@ -687,7 +685,6 @@
                 return;
               }
 
-              // Case B: Previous task was completed or finished
               if (state.status === 'completed' || state.download_finished) {
                 this.isDownloading = false;
                 this.downloadFinished = true;
@@ -704,7 +701,6 @@
                 this.rawCachedItems = state.raw_items || [];
                 this.logs = state.logs || [];
 
-                // Show persistent banner without timer
                 if (this.plan.length > 0) {
                   this.showResumeBanner = true;
                 }
@@ -718,7 +714,6 @@
         async startFreshTask() {
           this.showResumeBanner = false;
 
-          // Clear client UI memory
           this.folderUrl = '';
           this.destinationFolder = '';
           this.originalDetectedRoot = '';
@@ -736,7 +731,6 @@
           this.totalFilesToDownload = 0;
           this.transferStatusText = 'Idle';
 
-          // Reset server active task memory
           try {
             await fetch('/api/reset', { method: 'POST' });
           } catch (e) {
@@ -958,6 +952,7 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 plan: itemsToDownload,
+                master_plan: this.plan,
                 folder_url: this.folderUrl,
                 folder_name: this.destinationFolder || this.originalDetectedRoot
               })
@@ -979,6 +974,7 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 plan: singlePlan,
+                master_plan: this.plan,
                 folder_url: this.folderUrl,
                 folder_name: this.destinationFolder || this.originalDetectedRoot
               })

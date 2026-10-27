@@ -113,6 +113,7 @@ class FolderCheckRequest(BaseModel):
 
 class DownloadRequest(BaseModel):
     plan: List[Dict[str, Any]]
+    master_plan: Optional[List[Dict[str, Any]]] = None
     folder_url: str
     folder_name: Optional[str] = ""
 
@@ -149,7 +150,6 @@ async def get_download_status():
 
 @app.post("/api/reset")
 async def reset_workspace():
-    """Clears the active finished workspace memory on demand."""
     if not current_download_state["is_downloading"]:
         current_download_state.update({
             "is_downloading": False,
@@ -304,16 +304,18 @@ async def reparse_cached(req: ReparseRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_name: str = ""):
+async def run_download_job(items_to_download: List[Dict[str, Any]], master_plan: List[Dict[str, Any]], folder_url: str, folder_name: str = ""):
     global cancel_event, current_download_state
     cancel_event.clear()
 
-    to_download = [p for p in plan if p.get("action") == "download"]
-    total = len(to_download)
+    total = len(items_to_download)
     downloaded = 0
     status = "completed"
 
     clean_dest = clean_root_folder_name(folder_name)
+
+    # Preserve master plan in session memory instead of truncating to download items
+    full_plan = master_plan if master_plan else current_download_state.get("plan", [])
 
     current_download_state.update({
         "is_downloading": True,
@@ -324,13 +326,13 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
         "status": "downloading",
         "folder_url": folder_url,
         "destination_folder": clean_dest,
-        "plan": plan
+        "plan": full_plan
     })
 
     await broadcast_event({"type": "start", "total": total})
 
     try:
-        for item in to_download:
+        for item in items_to_download:
             if cancel_event.is_set():
                 status = "cancelled"
                 await broadcast_event({"type": "log", "message": "⚠️ Download job was cancelled by user."})
@@ -362,12 +364,16 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
                 repair_extensions(target_path)
                 downloaded += 1
 
-                item["action"] = "skip"
-                item["category"] = "skip_exists"
-                item["reason"] = "File already exists in destination folder"
-                if target_path.exists():
-                    item["size"] = target_path.stat().st_size
-                    item["size_str"] = format_size(target_path.stat().st_size)
+                # Update in-place in full_plan so all items (including bloat) are preserved
+                for p_item in full_plan:
+                    if p_item.get("id") == item.get("id"):
+                        p_item["action"] = "skip"
+                        p_item["category"] = "skip_exists"
+                        p_item["reason"] = "File already exists in destination folder"
+                        if target_path.exists():
+                            p_item["size"] = target_path.stat().st_size
+                            p_item["size_str"] = format_size(target_path.stat().st_size)
+                        break
 
                 await broadcast_event({
                     "type": "log",
@@ -396,7 +402,7 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
                 "status": status,
                 "completed_files": downloaded,
                 "folder_exists": folder_exists,
-                "plan": plan
+                "plan": full_plan
             })
 
             await broadcast_event({
@@ -412,7 +418,7 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
                 "status": "cancelled",
                 "completed_files": downloaded,
                 "folder_exists": folder_exists,
-                "plan": plan
+                "plan": full_plan
             })
             await broadcast_event({
                 "type": "cancelled",
@@ -441,7 +447,7 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
             folder_url,
             total,
             downloaded,
-            len(plan) - total,
+            len(full_plan) - total,
             status
         ))
         conn.commit()
@@ -449,7 +455,9 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
 
 @app.post("/api/download")
 async def start_download(req: DownloadRequest, background_tasks: BackgroundTasks):
-    background_tasks.add_task(run_download_job, req.plan, req.folder_url, req.folder_name or "")
+    items_to_download = req.plan
+    master_plan = req.master_plan if req.master_plan else current_download_state.get("plan", req.plan)
+    background_tasks.add_task(run_download_job, items_to_download, master_plan, req.folder_url, req.folder_name or "")
     return {"status": "started"}
 
 @app.post("/api/cancel")
