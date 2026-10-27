@@ -20,6 +20,7 @@ from backend.core import (
     fetch_folder_root_name,
     extract_drive_folder_id,
     clean_root_folder_name,
+    format_size,
 )
 
 app = FastAPI(title="AetherDrive")
@@ -38,7 +39,6 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "frontend"), name="static"
 event_subscribers: List[asyncio.Queue] = []
 cancel_event = asyncio.Event()
 
-# Complete persistent state kept in memory for client reconnection
 current_download_state: Dict[str, Any] = {
     "is_downloading": False,
     "download_finished": False,
@@ -87,7 +87,6 @@ def init_db():
 init_db()
 
 async def broadcast_event(data: Dict[str, Any]):
-    # Record recent log messages into memory buffer
     if data.get("type") == "log" and data.get("message"):
         current_download_state["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {data['message']}")
         if len(current_download_state["logs"]) > 200:
@@ -143,7 +142,9 @@ async def events():
 
 @app.get("/api/status")
 async def get_download_status():
-    """Returns the full active session (plan, logs, progress) to immediately reconstruct state."""
+    folder = clean_root_folder_name(current_download_state.get("destination_folder", ""))
+    if folder:
+        current_download_state["folder_exists"] = (DOWNLOAD_DIR / folder).exists()
     return current_download_state
 
 @app.post("/api/folder/status")
@@ -216,7 +217,6 @@ async def scan_folder(req: ScanRequest):
 
         folder_exists = (DOWNLOAD_DIR / root_name).exists() if root_name else False
 
-        # Store session in memory for state resumption
         current_download_state["folder_url"] = req.folder_url
         current_download_state["destination_folder"] = root_name
         current_download_state["folder_exists"] = folder_exists
@@ -292,6 +292,8 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
     downloaded = 0
     status = "completed"
 
+    clean_dest = clean_root_folder_name(folder_name)
+
     current_download_state.update({
         "is_downloading": True,
         "download_finished": False,
@@ -300,7 +302,7 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
         "percentage": 0,
         "status": "downloading",
         "folder_url": folder_url,
-        "destination_folder": folder_name,
+        "destination_folder": clean_dest,
         "plan": plan
     })
 
@@ -338,6 +340,15 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
             if success:
                 repair_extensions(target_path)
                 downloaded += 1
+
+                # Update item state in memory so it reflects as ON DISK
+                item["action"] = "skip"
+                item["category"] = "skip_exists"
+                item["reason"] = "File already exists in destination folder"
+                if target_path.exists():
+                    item["size"] = target_path.stat().st_size
+                    item["size_str"] = format_size(target_path.stat().st_size)
+
                 await broadcast_event({
                     "type": "log",
                     "message": f"✓ Saved: {item['sanitized_path']} ({detail})"
@@ -347,6 +358,8 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
                     "type": "log",
                     "message": f"❌ Failed: {item['sanitized_path']} | Reason: {detail}"
                 })
+
+        folder_exists = (DOWNLOAD_DIR / clean_dest).exists() if clean_dest else False
 
         if status != "cancelled":
             if total > 0 and downloaded == 0:
@@ -361,7 +374,9 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
                 "download_finished": True,
                 "percentage": 100,
                 "status": status,
-                "completed_files": downloaded
+                "completed_files": downloaded,
+                "folder_exists": folder_exists,
+                "plan": plan
             })
 
             await broadcast_event({
@@ -375,7 +390,9 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
                 "is_downloading": False,
                 "download_finished": True,
                 "status": "cancelled",
-                "completed_files": downloaded
+                "completed_files": downloaded,
+                "folder_exists": folder_exists,
+                "plan": plan
             })
             await broadcast_event({
                 "type": "cancelled",
@@ -400,7 +417,7 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            folder_name or "Unnamed Folder",
+            clean_dest or "Unnamed Folder",
             folder_url,
             total,
             downloaded,

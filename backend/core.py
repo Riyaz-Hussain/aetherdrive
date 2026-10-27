@@ -67,7 +67,6 @@ def extract_drive_folder_id(url: str) -> Optional[str]:
 
 
 def clean_root_folder_name(raw_name: str) -> str:
-    """Cleans title and strips trailing 'Drive' or '- Google Drive'."""
     s = html.unescape(raw_name).strip()
     s = re.sub(r'["\']', '', s)
     s = re.sub(r'\s*-\s*Google\s*Drive$', '', s, flags=re.IGNORECASE)
@@ -141,11 +140,10 @@ async def parse_drive_folder(folder_url: str, custom_root: Optional[str] = "") -
             for f_id, name in matches:
                 clean_name = html.unescape(urllib.parse.unquote(name)).strip()
                 if clean_name and f_id != folder_id:
-                    path_str = f"{root_folder_name}/{clean_name}" if root_folder_name else clean_name
                     items.append({
                         "id": f_id,
                         "name": clean_name,
-                        "path": path_str,
+                        "path": clean_name,
                         "relative_subpath": clean_name,
                         "size": size_map.get(f_id, 0)
                     })
@@ -162,21 +160,19 @@ async def parse_drive_folder(folder_url: str, custom_root: Optional[str] = "") -
             for r in (raw or []):
                 if isinstance(r, dict) and r.get("id"):
                     rel_sub = html.unescape(r.get("path", r.get("name", "unnamed")))
-                    path_str = f"{root_folder_name}/{rel_sub}" if root_folder_name else rel_sub
                     items.append({
                         "id": r["id"],
                         "name": html.unescape(r.get("name", "unnamed")),
-                        "path": path_str,
+                        "path": rel_sub,
                         "relative_subpath": rel_sub,
                         "size": r.get("size", 0)
                     })
                 elif hasattr(r, "id"):
                     rel_sub = html.unescape(getattr(r, "path", getattr(r, "name", "unnamed")))
-                    path_str = f"{root_folder_name}/{rel_sub}" if root_folder_name else rel_sub
                     items.append({
                         "id": getattr(r, "id"),
                         "name": html.unescape(getattr(r, "name", "unnamed")),
-                        "path": path_str,
+                        "path": rel_sub,
                         "relative_subpath": rel_sub,
                         "size": getattr(r, "size", 0)
                     })
@@ -216,6 +212,7 @@ def sanitize_path(raw_path: str) -> str:
             s = part.strip()
         cleaned_parts.append(s.strip())
 
+    # Prevent adjacent duplicates
     collapsed = []
     for part in cleaned_parts:
         if not collapsed or collapsed[-1].lower() != part.lower():
@@ -245,6 +242,7 @@ def is_file_already_on_disk(download_dir: Path, sanitized_rel_path: str) -> tupl
     if target_file.exists() and target_file.is_file() and target_file.stat().st_size > 0:
         return True, target_file.stat().st_size
 
+    # Match normalized stems inside the enclosing parent directory
     parent_folder = target_file.parent
     if parent_folder.exists() and parent_folder.is_dir():
         target_norm = re.sub(r"[^a-zA-Z0-9]", "", target_file.stem.lower())
@@ -274,20 +272,20 @@ def apply_heuristics(
         file_id = item.get("id")
         raw_size = item.get("size", 0)
 
-        # Recalculate full relative path based on the chosen destination folder
-        rel_sub = item.get("relative_subpath")
-        if not rel_sub:
-            raw_p = item.get("path", original_name)
-            if "/" in raw_p:
-                rel_sub = raw_p.split("/", 1)[1]
-            else:
-                rel_sub = raw_p
+        # Get raw subpath
+        raw_p = item.get("relative_subpath") or item.get("path") or original_name
+        sanitized_p = sanitize_path(raw_p)
 
-        sanitized_subpath = sanitize_path(rel_sub)
+        # Check if subpath already starts with dest_root to prevent folder doubling
         if dest_root:
-            sanitized_rel_path = f"{dest_root}/{sanitized_subpath}"
+            if sanitized_p.lower() == dest_root.lower():
+                sanitized_rel_path = dest_root
+            elif sanitized_p.lower().startswith(dest_root.lower() + "/"):
+                sanitized_rel_path = sanitized_p
+            else:
+                sanitized_rel_path = f"{dest_root}/{sanitized_p}"
         else:
-            sanitized_rel_path = sanitized_subpath
+            sanitized_rel_path = sanitized_p
 
         sanitized_name = Path(sanitized_rel_path).name
 
@@ -298,7 +296,7 @@ def apply_heuristics(
             "id": file_id,
             "original_path": item.get("path", original_name),
             "sanitized_path": sanitized_rel_path,
-            "relative_subpath": rel_sub,
+            "relative_subpath": raw_p,
             "name": sanitized_name,
             "size": display_size_val,
             "size_str": format_size(display_size_val),
@@ -319,7 +317,7 @@ def apply_heuristics(
             plan.append(plan_entry)
             continue
 
-        # 2. Check if file exists in the destination folder
+        # 2. Check if file genuinely exists inside destination folder on disk
         if exists_on_disk:
             plan_entry["action"] = "skip"
             plan_entry["category"] = "skip_exists"
