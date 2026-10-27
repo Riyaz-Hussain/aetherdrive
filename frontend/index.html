@@ -45,7 +45,7 @@
 <body class="bg-[#090b10] text-slate-100 min-h-screen font-sans antialiased selection:bg-brand-500 selection:text-white"
       x-data="aetherApp()" x-init="initApp()" x-cloak>
 
-  <!-- Auto-Dismissing Banner for Completed Tasks -->
+  <!-- Persistent Banner for Completed Tasks -->
   <div x-show="showResumeBanner" 
        x-transition:enter="transition ease-out duration-300"
        x-transition:enter-start="-translate-y-full opacity-0"
@@ -56,21 +56,16 @@
        class="bg-gradient-to-r from-cyan-950/90 via-surface-card to-indigo-950/90 border-b border-cyan-500/30 sticky top-0 z-40 px-4 py-2.5 backdrop-blur-md shadow-lg">
     <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs">
       <div class="flex items-center space-x-2 truncate">
-        <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+        <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
         <span class="text-slate-300">Previous task loaded:</span>
         <span class="font-bold text-cyan-300 truncate" x-text="destinationFolder || 'Unnamed Task'"></span>
         <span class="text-slate-500 hidden sm:inline" x-text="`(${completedFiles} files saved)`"></span>
-        <span class="text-slate-400 font-mono text-[11px]" x-show="dismissCountdown > 0" x-text="`• Auto-clearing in ${dismissCountdown}s`"></span>
       </div>
 
       <div class="flex items-center space-x-2 shrink-0">
         <button @click="startFreshTask()" 
                 class="px-3 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition shadow-sm">
           Start New Task
-        </button>
-        <button @click="keepViewing()" 
-                class="px-2.5 py-1 rounded-lg border border-surface-border hover:bg-surface-border text-slate-300 text-xs transition">
-          Keep Viewing
         </button>
       </div>
     </div>
@@ -129,7 +124,6 @@
       </div>
 
       <div class="flex items-center space-x-2.5">
-        <!-- New Task Button -->
         <button x-show="plan.length > 0 && !isDownloading"
                 @click="startFreshTask()"
                 class="hidden sm:flex items-center space-x-1.5 text-xs font-semibold text-cyan-300 hover:text-white px-3 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-950/30 hover:bg-cyan-900/40 transition">
@@ -606,10 +600,8 @@
         activeTab: 'all',
         evtSource: null,
 
-        // Auto-Dismissing Banner State
+        // Persistent Banner State (no auto-dismiss timer)
         showResumeBanner: false,
-        dismissCountdown: 7,
-        dismissInterval: null,
 
         get downloadCount() {
           return this.plan.filter(i => i.category === 'download').length;
@@ -697,7 +689,6 @@
 
               // Case B: Previous task was completed or finished
               if (state.status === 'completed' || state.download_finished) {
-                // Populate previous session details
                 this.isDownloading = false;
                 this.downloadFinished = true;
                 this.currentFile = state.current_file;
@@ -713,9 +704,9 @@
                 this.rawCachedItems = state.raw_items || [];
                 this.logs = state.logs || [];
 
-                // Trigger the auto-dismissing banner
+                // Show persistent banner without timer
                 if (this.plan.length > 0) {
-                  this.triggerResumeBanner();
+                  this.showResumeBanner = true;
                 }
               }
             }
@@ -724,27 +715,7 @@
           }
         },
 
-        triggerResumeBanner() {
-          this.showResumeBanner = true;
-          this.dismissCountdown = 7;
-          if (this.dismissInterval) clearInterval(this.dismissInterval);
-
-          this.dismissInterval = setInterval(() => {
-            this.dismissCountdown--;
-            if (this.dismissCountdown <= 0) {
-              clearInterval(this.dismissInterval);
-              this.startFreshTask();
-            }
-          }, 1000);
-        },
-
-        keepViewing() {
-          if (this.dismissInterval) clearInterval(this.dismissInterval);
-          this.showResumeBanner = false;
-        },
-
         async startFreshTask() {
-          if (this.dismissInterval) clearInterval(this.dismissInterval);
           this.showResumeBanner = false;
 
           // Clear client UI memory
@@ -897,7 +868,6 @@
         },
 
         async inspectFolder() {
-          if (this.dismissInterval) clearInterval(this.dismissInterval);
           this.showResumeBanner = false;
 
           this.isScanning = true;
@@ -967,7 +937,6 @@
         },
 
         async executeDownload() {
-          if (this.dismissInterval) clearInterval(this.dismissInterval);
           this.showResumeBanner = false;
 
           let itemsToDownload = [];
@@ -1000,7 +969,6 @@
 
         async downloadSingleItem(item) {
           if (this.isDownloading) return;
-          if (this.dismissInterval) clearInterval(this.dismissInterval);
           this.showResumeBanner = false;
 
           this.addLog(`Initiating single-file test download: ${item.sanitized_path}`);
