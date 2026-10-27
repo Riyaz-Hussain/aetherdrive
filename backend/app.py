@@ -147,6 +147,27 @@ async def get_download_status():
         current_download_state["folder_exists"] = (DOWNLOAD_DIR / folder).exists()
     return current_download_state
 
+@app.post("/api/reset")
+async def reset_workspace():
+    """Clears the active finished workspace memory on demand."""
+    if not current_download_state["is_downloading"]:
+        current_download_state.update({
+            "is_downloading": False,
+            "download_finished": False,
+            "current_file": "",
+            "completed_files": 0,
+            "total_files": 0,
+            "percentage": 0,
+            "status": "idle",
+            "folder_url": "",
+            "destination_folder": "",
+            "folder_exists": False,
+            "plan": [],
+            "raw_items": [],
+            "logs": []
+        })
+    return {"status": "reset"}
+
 @app.post("/api/folder/status")
 async def check_folder_status(req: FolderCheckRequest):
     folder = clean_root_folder_name(req.folder_name)
@@ -341,7 +362,6 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
                 repair_extensions(target_path)
                 downloaded += 1
 
-                # Update item state in memory so it reflects as ON DISK
                 item["action"] = "skip"
                 item["category"] = "skip_exists"
                 item["reason"] = "File already exists in destination folder"
