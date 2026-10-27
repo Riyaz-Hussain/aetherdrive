@@ -38,6 +38,7 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "frontend"), name="static"
 event_subscribers: List[asyncio.Queue] = []
 cancel_event = asyncio.Event()
 
+# Complete persistent state kept in memory for client reconnection
 current_download_state: Dict[str, Any] = {
     "is_downloading": False,
     "download_finished": False,
@@ -45,7 +46,13 @@ current_download_state: Dict[str, Any] = {
     "completed_files": 0,
     "total_files": 0,
     "percentage": 0,
-    "status": "idle"
+    "status": "idle",
+    "folder_url": "",
+    "destination_folder": "",
+    "folder_exists": False,
+    "plan": [],
+    "raw_items": [],
+    "logs": []
 }
 
 def init_db():
@@ -80,6 +87,12 @@ def init_db():
 init_db()
 
 async def broadcast_event(data: Dict[str, Any]):
+    # Record recent log messages into memory buffer
+    if data.get("type") == "log" and data.get("message"):
+        current_download_state["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {data['message']}")
+        if len(current_download_state["logs"]) > 200:
+            current_download_state["logs"].pop(0)
+
     message = json.dumps(data)
     for q in event_subscribers:
         await q.put(message)
@@ -130,6 +143,7 @@ async def events():
 
 @app.get("/api/status")
 async def get_download_status():
+    """Returns the full active session (plan, logs, progress) to immediately reconstruct state."""
     return current_download_state
 
 @app.post("/api/folder/status")
@@ -202,6 +216,13 @@ async def scan_folder(req: ScanRequest):
 
         folder_exists = (DOWNLOAD_DIR / root_name).exists() if root_name else False
 
+        # Store session in memory for state resumption
+        current_download_state["folder_url"] = req.folder_url
+        current_download_state["destination_folder"] = root_name
+        current_download_state["folder_exists"] = folder_exists
+        current_download_state["raw_items"] = raw_items
+        current_download_state["plan"] = plan
+
         return {
             "root_folder_name": root_name,
             "detected_root": detected_root,
@@ -233,8 +254,6 @@ async def reparse_cached(req: ReparseRequest):
         ))
 
         root_name = clean_root_folder_name(req.destination_folder.strip())
-        
-        # If user cleared the input, restore the original detected name
         if not root_name:
             if req.fallback_root:
                 root_name = clean_root_folder_name(req.fallback_root)
@@ -251,6 +270,10 @@ async def reparse_cached(req: ReparseRequest):
         )
 
         folder_exists = (DOWNLOAD_DIR / root_name).exists() if root_name else False
+
+        current_download_state["destination_folder"] = root_name
+        current_download_state["folder_exists"] = folder_exists
+        current_download_state["plan"] = plan
 
         return {
             "root_folder_name": root_name,
@@ -275,7 +298,10 @@ async def run_download_job(plan: List[Dict[str, Any]], folder_url: str, folder_n
         "completed_files": 0,
         "total_files": total,
         "percentage": 0,
-        "status": "downloading"
+        "status": "downloading",
+        "folder_url": folder_url,
+        "destination_folder": folder_name,
+        "plan": plan
     })
 
     await broadcast_event({"type": "start", "total": total})

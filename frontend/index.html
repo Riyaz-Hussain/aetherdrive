@@ -136,7 +136,7 @@
           </div>
         </div>
 
-        <!-- Destination Folder with Status Badge and Reset Button -->
+        <!-- Destination Folder with Reset Option -->
         <div>
           <div class="flex items-center justify-between mb-2">
             <div class="flex items-center space-x-1.5">
@@ -638,6 +638,26 @@
               this.totalFilesToDownload = state.total_files;
               this.progressPercentage = state.percentage;
 
+              if (state.folder_url && !this.folderUrl) {
+                this.folderUrl = state.folder_url;
+              }
+              if (state.destination_folder && !this.destinationFolder) {
+                this.destinationFolder = state.destination_folder;
+                this.originalDetectedRoot = state.destination_folder;
+              }
+              if (typeof state.folder_exists === 'boolean') {
+                this.folderExists = state.folder_exists;
+              }
+              if (Array.isArray(state.raw_items) && state.raw_items.length > 0) {
+                this.rawCachedItems = state.raw_items;
+              }
+              if (Array.isArray(state.plan) && state.plan.length > 0 && this.plan.length === 0) {
+                this.plan = state.plan;
+              }
+              if (Array.isArray(state.logs) && state.logs.length > 0 && this.logs.length === 0) {
+                this.logs = state.logs;
+              }
+
               if (state.status === 'downloading') {
                 this.transferStatusText = 'Downloading Content...';
               } else if (state.status === 'completed') {
@@ -648,6 +668,11 @@
               } else if (state.status === 'cancelled') {
                 this.transferStatusText = 'Cancelled by User';
               }
+
+              this.$nextTick(() => {
+                const term = document.getElementById('log-terminal');
+                if (term) term.scrollTop = term.scrollHeight;
+              });
             }
           } catch (e) {
             console.error('Failed to sync download state:', e);
@@ -814,7 +839,6 @@
         async reapplyRulesInstant() {
           if (!this.rawCachedItems || this.rawCachedItems.length === 0) return;
           
-          // If empty, auto-restore original detected folder
           if (!this.destinationFolder.trim() && this.originalDetectedRoot) {
             this.destinationFolder = this.originalDetectedRoot;
           }
