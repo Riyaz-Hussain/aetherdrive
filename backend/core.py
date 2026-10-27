@@ -41,7 +41,6 @@ DEFAULT_EXCLUDE_PATTERNS = [
     "*content owner*",
     "*owner channel*",
     "*bonus*",
-    "*binus*",
 ]
 
 URL_DOMAIN_PATTERN = re.compile(
@@ -67,6 +66,16 @@ def extract_drive_folder_id(url: str) -> Optional[str]:
     return None
 
 
+def clean_root_folder_name(raw_name: str) -> str:
+    """Cleans title and strips trailing 'Drive' or '- Google Drive'."""
+    s = html.unescape(raw_name).strip()
+    s = re.sub(r'["\']', '', s)
+    s = re.sub(r'\s*-\s*Google\s*Drive$', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'[\s_-]+Drive$', '', s, flags=re.IGNORECASE)
+    cleaned = sanitize_path(s)
+    return cleaned.strip()
+
+
 def fetch_folder_root_name(folder_id: str) -> str:
     try:
         url = f"https://drive.google.com/drive/folders/{folder_id}"
@@ -78,17 +87,15 @@ def fetch_folder_root_name(folder_id: str) -> str:
             page_html = resp.read().decode("utf-8", errors="ignore")
         match = re.search(r"<title>([^<]+?)(?:\s*-\s*Google Drive)?</title>", page_html, re.IGNORECASE)
         if match:
-            raw_title = html.unescape(match.group(1)).strip()
-            raw_title = re.sub(r'["\']', '', raw_title)
+            raw_title = match.group(1).strip()
             if raw_title and raw_title.lower() != "google drive":
-                return sanitize_path(raw_title)
+                return clean_root_folder_name(raw_title)
     except Exception:
         pass
     return ""
 
 
 def format_size(bytes_val: int) -> str:
-    """Formats numeric bytes into human-readable strings."""
     if not bytes_val or bytes_val <= 0:
         return "—"
     for unit in ['B', 'KB', 'MB', 'GB']:
@@ -106,10 +113,10 @@ async def parse_drive_folder(folder_url: str, custom_root: Optional[str] = "") -
     loop = asyncio.get_event_loop()
 
     def _scrape():
-        root_folder_name = custom_root.strip() if custom_root else fetch_folder_root_name(folder_id)
+        detected_root = fetch_folder_root_name(folder_id)
+        root_folder_name = clean_root_folder_name(custom_root) if custom_root else detected_root
         items = []
 
-        # 1. Embedded folderview scraper with data-size extraction
         view_url = f"https://drive.google.com/embeddedfolderview?id={folder_id}#grid"
         req = urllib.request.Request(
             view_url,
@@ -118,27 +125,33 @@ async def parse_drive_folder(folder_url: str, custom_root: Optional[str] = "") -
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 resp_html = resp.read().decode("utf-8", errors="ignore")
-            # Extract ID, name, and size attributes if present in flip-entry
+
+            size_map = {}
+            for sid, sz in re.findall(r'\["([a-zA-Z0-9_-]{25,})",.*?(\d{4,12})\]', resp_html):
+                try:
+                    size_map[sid] = int(sz)
+                except ValueError:
+                    pass
+
             matches = re.findall(
-                r'data-id="([a-zA-Z0-9_-]+)"(?:[^>]*?data-size="(\d+)")?[^>]*?>.*?class="flip-entry-title"[^>]*>([^<]+)<',
+                r'data-id="([a-zA-Z0-9_-]+)".*?class="flip-entry-title"[^>]*>([^<]+)<',
                 resp_html,
                 re.DOTALL
             )
-            for f_id, f_size, name in matches:
+            for f_id, name in matches:
                 clean_name = html.unescape(urllib.parse.unquote(name)).strip()
                 if clean_name and f_id != folder_id:
                     path_str = f"{root_folder_name}/{clean_name}" if root_folder_name else clean_name
-                    size_int = int(f_size) if f_size else 0
                     items.append({
                         "id": f_id,
                         "name": clean_name,
                         "path": path_str,
-                        "size": size_int
+                        "relative_subpath": clean_name,
+                        "size": size_map.get(f_id, 0)
                     })
         except Exception:
             pass
 
-        # 2. Gdown folder metadata crawler
         if not items:
             raw = gdown.download_folder(
                 f"https://drive.google.com/drive/folders/{folder_id}",
@@ -148,23 +161,23 @@ async def parse_drive_folder(folder_url: str, custom_root: Optional[str] = "") -
             )
             for r in (raw or []):
                 if isinstance(r, dict) and r.get("id"):
-                    rel_path = html.unescape(r.get("path", r.get("name", "unnamed")))
-                    if root_folder_name and not rel_path.startswith(root_folder_name):
-                        rel_path = f"{root_folder_name}/{rel_path}"
+                    rel_sub = html.unescape(r.get("path", r.get("name", "unnamed")))
+                    path_str = f"{root_folder_name}/{rel_sub}" if root_folder_name else rel_sub
                     items.append({
                         "id": r["id"],
                         "name": html.unescape(r.get("name", "unnamed")),
-                        "path": rel_path,
+                        "path": path_str,
+                        "relative_subpath": rel_sub,
                         "size": r.get("size", 0)
                     })
                 elif hasattr(r, "id"):
-                    rel_path = html.unescape(getattr(r, "path", getattr(r, "name", "unnamed")))
-                    if root_folder_name and not rel_path.startswith(root_folder_name):
-                        rel_path = f"{root_folder_name}/{rel_path}"
+                    rel_sub = html.unescape(getattr(r, "path", getattr(r, "name", "unnamed")))
+                    path_str = f"{root_folder_name}/{rel_sub}" if root_folder_name else rel_sub
                     items.append({
                         "id": getattr(r, "id"),
                         "name": html.unescape(getattr(r, "name", "unnamed")),
-                        "path": rel_path,
+                        "path": path_str,
+                        "relative_subpath": rel_sub,
                         "size": getattr(r, "size", 0)
                     })
 
@@ -227,7 +240,6 @@ def matches_wildcards(target: str, patterns: List[str]) -> bool:
 
 
 def is_file_already_on_disk(download_dir: Path, sanitized_rel_path: str) -> tuple[bool, int]:
-    """Accurately checks whether the file exists inside its designated enclosing directory."""
     target_file = download_dir / sanitized_rel_path
     
     if target_file.exists() and target_file.is_file() and target_file.stat().st_size > 0:
@@ -248,20 +260,35 @@ def is_file_already_on_disk(download_dir: Path, sanitized_rel_path: str) -> tupl
 def apply_heuristics(
     raw_items: List[Dict[str, Any]],
     download_dir: Path,
+    destination_root: Optional[str] = "",
     exclusions: Optional[str] = "",
 ) -> List[Dict[str, Any]]:
     custom_patterns = [p.strip() for p in (exclusions or "").split(",") if p.strip()]
     active_patterns = list(set(DEFAULT_EXCLUDE_PATTERNS + custom_patterns))
 
+    dest_root = clean_root_folder_name(destination_root) if destination_root else ""
     plan = []
 
     for item in raw_items:
-        original_path = item.get("path", item.get("name", ""))
         original_name = item.get("name", "")
         file_id = item.get("id")
         raw_size = item.get("size", 0)
 
-        sanitized_rel_path = sanitize_path(original_path)
+        # Recalculate full relative path based on the chosen destination folder
+        rel_sub = item.get("relative_subpath")
+        if not rel_sub:
+            raw_p = item.get("path", original_name)
+            if "/" in raw_p:
+                rel_sub = raw_p.split("/", 1)[1]
+            else:
+                rel_sub = raw_p
+
+        sanitized_subpath = sanitize_path(rel_sub)
+        if dest_root:
+            sanitized_rel_path = f"{dest_root}/{sanitized_subpath}"
+        else:
+            sanitized_rel_path = sanitized_subpath
+
         sanitized_name = Path(sanitized_rel_path).name
 
         exists_on_disk, disk_size = is_file_already_on_disk(download_dir, sanitized_rel_path)
@@ -269,8 +296,9 @@ def apply_heuristics(
 
         plan_entry = {
             "id": file_id,
-            "original_path": original_path,
+            "original_path": item.get("path", original_name),
             "sanitized_path": sanitized_rel_path,
+            "relative_subpath": rel_sub,
             "name": sanitized_name,
             "size": display_size_val,
             "size_str": format_size(display_size_val),
@@ -282,8 +310,8 @@ def apply_heuristics(
         # 1. Skipped Bloat Files
         if (
             matches_wildcards(original_name, active_patterns)
-            or matches_wildcards(original_path, active_patterns)
             or matches_wildcards(sanitized_name, active_patterns)
+            or matches_wildcards(sanitized_rel_path, active_patterns)
         ):
             plan_entry["action"] = "skip"
             plan_entry["category"] = "skip_bloat"
@@ -291,7 +319,7 @@ def apply_heuristics(
             plan.append(plan_entry)
             continue
 
-        # 2. Check if file genuinely exists inside its destination folder
+        # 2. Check if file exists in the destination folder
         if exists_on_disk:
             plan_entry["action"] = "skip"
             plan_entry["category"] = "skip_exists"
