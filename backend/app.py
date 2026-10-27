@@ -91,6 +91,8 @@ class ScanRequest(BaseModel):
 
 class ReparseRequest(BaseModel):
     raw_items: List[Dict[str, Any]]
+    folder_url: Optional[str] = ""
+    fallback_root: Optional[str] = ""
     destination_folder: Optional[str] = ""
     exclusions: Optional[str] = ""
 
@@ -128,7 +130,6 @@ async def events():
 
 @app.get("/api/status")
 async def get_download_status():
-    """Returns active download state to instantly restore UI after laptop wakes up."""
     return current_download_state
 
 @app.post("/api/folder/status")
@@ -203,6 +204,7 @@ async def scan_folder(req: ScanRequest):
 
         return {
             "root_folder_name": root_name,
+            "detected_root": detected_root,
             "folder_exists": folder_exists,
             "raw_items": raw_items,
             "plan": plan
@@ -231,6 +233,15 @@ async def reparse_cached(req: ReparseRequest):
         ))
 
         root_name = clean_root_folder_name(req.destination_folder.strip())
+        
+        # If user cleared the input, restore the original detected name
+        if not root_name:
+            if req.fallback_root:
+                root_name = clean_root_folder_name(req.fallback_root)
+            elif req.folder_url:
+                f_id = extract_drive_folder_id(req.folder_url)
+                if f_id:
+                    root_name = fetch_folder_root_name(f_id)
 
         plan = apply_heuristics(
             req.raw_items,

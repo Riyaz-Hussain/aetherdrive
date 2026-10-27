@@ -136,10 +136,16 @@
           </div>
         </div>
 
-        <!-- Destination Folder with Status Notification Badge -->
+        <!-- Destination Folder with Status Badge and Reset Button -->
         <div>
           <div class="flex items-center justify-between mb-2">
-            <label class="text-xs font-semibold tracking-wider uppercase text-slate-400">Destination Folder</label>
+            <div class="flex items-center space-x-1.5">
+              <label class="text-xs font-semibold tracking-wider uppercase text-slate-400">Destination Folder</label>
+              <button x-show="originalDetectedRoot && destinationFolder !== originalDetectedRoot"
+                      @click="destinationFolder = originalDetectedRoot; checkFolderStatus(); reapplyRulesInstant()"
+                      title="Reset to detected folder name"
+                      class="text-[10px] text-cyan-400 hover:text-cyan-300 underline font-mono">↺ Reset</button>
+            </div>
             <template x-if="destinationFolder">
               <span class="text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold"
                     :class="folderExists ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/10 text-amber-300 border border-amber-500/30'"
@@ -153,7 +159,7 @@
               </svg>
             </div>
             <input type="text" x-model="destinationFolder" @input.debounce.300ms="checkFolderStatus()"
-                   placeholder="Auto-detected on inspect" 
+                   :placeholder="originalDetectedRoot || 'Auto-detected on inspect'" 
                    :disabled="isDownloading"
                    class="w-full bg-transparent pl-10 pr-4 py-2.5 sm:py-3 text-xs sm:text-sm text-cyan-200 focus:outline-none disabled:opacity-50 font-mono" />
           </div>
@@ -183,7 +189,6 @@
             <span x-text="isScanning ? 'Inspecting Folder Tree...' : 'Inspect & Generate Plan'"></span>
           </button>
 
-          <!-- Instant Re-Apply Rules (Scans Disk Under Active Destination Folder) -->
           <button x-show="rawCachedItems.length > 0 && !isDownloading && !isScanning"
                   @click="reapplyRulesInstant()"
                   title="Recalculate disk/bloat filters instantly without waiting for Google Drive"
@@ -537,6 +542,7 @@
       return {
         folderUrl: '',
         destinationFolder: '',
+        originalDetectedRoot: '',
         folderExists: false,
         exclusions: '',
         isScanning: false,
@@ -591,7 +597,6 @@
           this.fetchSavedExclusions();
           this.syncDownloadStatus();
 
-          // Listen for tab focus or laptop waking up
           document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
               this.syncDownloadStatus();
@@ -601,7 +606,8 @@
         },
 
         async checkFolderStatus() {
-          if (!this.destinationFolder.trim()) {
+          const target = this.destinationFolder.trim() || this.originalDetectedRoot;
+          if (!target) {
             this.folderExists = false;
             return;
           }
@@ -609,7 +615,7 @@
             const res = await fetch('/api/folder/status', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ folder_name: this.destinationFolder })
+              body: JSON.stringify({ folder_name: target })
             });
             if (res.ok) {
               const data = await res.json();
@@ -715,7 +721,6 @@
           };
 
           this.evtSource.onerror = () => {
-            // Reconnect automatically if connection drops
             setTimeout(() => this.connectEventSource(), 4000);
           };
         },
@@ -794,6 +799,7 @@
             }
             const data = await res.json();
             this.destinationFolder = data.root_folder_name || this.destinationFolder;
+            this.originalDetectedRoot = data.detected_root || data.root_folder_name || this.destinationFolder;
             this.folderExists = !!data.folder_exists;
             this.rawCachedItems = data.raw_items || [];
             this.plan = data.plan || [];
@@ -807,21 +813,30 @@
 
         async reapplyRulesInstant() {
           if (!this.rawCachedItems || this.rawCachedItems.length === 0) return;
-          this.addLog(`Re-evaluating local disk & bloat rules for destination "${this.destinationFolder}"...`);
+          
+          // If empty, auto-restore original detected folder
+          if (!this.destinationFolder.trim() && this.originalDetectedRoot) {
+            this.destinationFolder = this.originalDetectedRoot;
+          }
+
+          this.addLog(`Re-evaluating local disk & bloat rules for destination "${this.destinationFolder || this.originalDetectedRoot}"...`);
           try {
             const res = await fetch('/api/reparse', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 raw_items: this.rawCachedItems,
+                folder_url: this.folderUrl,
+                fallback_root: this.originalDetectedRoot,
                 destination_folder: this.destinationFolder,
                 exclusions: this.exclusions
               })
             });
             if (res.ok) {
               const data = await res.json();
-              this.plan = data.plan || [];
+              this.destinationFolder = data.root_folder_name || this.destinationFolder;
               this.folderExists = !!data.folder_exists;
+              this.plan = data.plan || [];
               this.addLog(`✓ Recalculated: ${this.downloadCount} to download, ${this.skippedExistsCount} on disk, ${this.skippedBloatCount} bloat.`);
             }
           } catch (e) {
@@ -850,7 +865,7 @@
               body: JSON.stringify({
                 plan: itemsToDownload,
                 folder_url: this.folderUrl,
-                folder_name: this.destinationFolder
+                folder_name: this.destinationFolder || this.originalDetectedRoot
               })
             });
           } catch (e) {
@@ -869,7 +884,7 @@
               body: JSON.stringify({
                 plan: singlePlan,
                 folder_url: this.folderUrl,
-                folder_name: this.destinationFolder
+                folder_name: this.destinationFolder || this.originalDetectedRoot
               })
             });
           } catch (e) {
