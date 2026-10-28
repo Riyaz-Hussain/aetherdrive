@@ -1,8 +1,8 @@
 <div align="center">
 
-# AetherDrive
+# ⚡ AetherDrive
 
-### Intelligent Cloud Ingestion Engine & Automated Content Sanitizer
+### Cloud Downloader, Folder Tree Crawler & Path-Sanitizing Engine
 
 [![Docker Image](https://img.shields.io/badge/Docker-ghcr.io-2496ED?logo=docker&logoColor=white)](https://ghcr.io/riyaz-hussain/aetherdrive)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -12,98 +12,67 @@
 
 </div>
 
-A containerized ingestion suite engineered to pull Google Drive directories, contextually strip spam watermarks and tracking domains, repair missing file extensions via binary magic-byte inspection, selectively purge promotional bloat, and maintain an audit history through an interactive glassmorphic dashboard.
+**AetherDrive** is a cloud downloader, folder tree crawler, and path-sanitizing engine built with **FastAPI**, **Alpine.js**, and **Tailwind CSS**. It is designed to inspect public Google Drive folders, strip aggressive promo watermarks, detect spam/bloatware, avoid downloading duplicate files already on disk, and manage transfers through Docker.
 
 ---
 
 ## Table of Contents
 
-- [Overview & Core Value Proposition](#overview--core-value-proposition)
 - [Key Features & Capabilities](#key-features--capabilities)
-- [Deep-Dive Architecture](#deep-dive-architecture)
-- [Deployment & Quick Start](#deployment--quick-start)
-- [User Interface & Dashboard Guide](#user-interface--dashboard-guide)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [Usage Guide](#usage-guide)
 - [Engine Mechanics: Sanitization & Heuristics](#engine-mechanics-sanitization--heuristics)
+- [Execution Audit Log & Data Retention](#execution-audit-log--data-retention)
 - [API Reference](#api-reference)
 - [Configuration & Environment](#configuration--environment)
 - [Troubleshooting & FAQ](#troubleshooting--faq)
+- [Tech Stack](#tech-stack)
 - [Third-Party Credits & Attributions](#third-party-credits--attributions)
 - [License](#license)
 
 ---
 
-## Overview & Core Value Proposition
-
-Shared cloud storage repositories (such as community course dumps, resource archives, and shared Google Drive directories) frequently present several recurring operational challenges:
-
-- **Polluted Naming Conventions:** Files and directories are often branded with tracking URLs, domain watermarks (`*.vercel.app`, `@telegram_channels`), and marketing spam.
-- **Redundant Directory Nesting:** Drive exports often wrap contents in deeply nested, redundant subfolders bearing identical names.
-- **Missing or Truncated File Extensions:** Raw media files are frequently saved without extensions (e.g., raw MP4 streams downloaded as generic binary blobs), breaking playback on media servers like Plex, Jellyfin, or local players.
-- **Promotional Bloat:** Repositories often bundle 50GB+ of irrelevant promotional materials (`500$ Bonus Pack`, `Free Reels Bundle`, `Join VIP Channel`) alongside legitimate content.
-- **Bandwidth Waste:** Re-running standard sync scripts often redownloads already ingested files.
-
-**AetherDrive resolves these challenges automatically.** It acts as an automated ingestion proxy: scanning remote folder structures, calculating differential execution plans, sanitizing filenames, restoring extensions on disk using magic-byte checks, and logging every run to an SQLite datastore.
-
----
-
 ## Key Features & Capabilities
 
-### 1. Dual-Tier Pre-Execution Scanning
+### 1. Smart Folder Tree Scraping & Heuristics
 
-- **Dry-Run Analysis:** Before downloading a single byte, inspect the remote folder tree and view an actionable execution plan.
-- **Smart Path Preview:** Displays both original polluted remote paths and cleaned target local paths side-by-side.
+- **Dual-Engine Folder Scraper:** Crawls embedded Google Drive views and metadata hierarchies without requiring official Google Cloud API keys.
+- **Aggressive Path & Watermark Sanitization:** Strips domain URLs (`.com`, `.net`, `.app`, `.vercel.app`), social media handles (`@username`), promotional copy artifacts (`Copy of...`, `Copy (1) of...`), and channel watermarks while preserving valid directory structures.
+- **Bloatware & Spam Filtering:** Built-in wildcard filters automatically isolate promo files, giveaways, and keygens into a separate tab without downloading them.
+- **On-Disk Deduplication:** Inspects `/downloads/` against clean paths and file sizes before initiating transfers to skip files that already exist locally.
+- **Binary File Extension Repair:** Inspects magic byte signatures (`ftyp`, `RIFF`, `PK\x03\x04`, `Rar!`, `ID3`, etc.) post-download to repair missing or broken extensions.
 
-### 2. Context-Aware Bloat Filtration
+### 2. Interactive Planning & Execution Workspace
 
-- **Pattern Match Engine:** Targets and prunes known promotional keywords (`*bonus*`, `*500$*`, `*reels bundle*`, `*join telegram*`, `*vip access*`).
-- **Context Preservation:** Distinguishes between spam markers and valid curriculum topics (e.g., retains `WhatsApp Marketing Blueprint` while stripping `Join WhatsApp Group for Freebies`).
+- **4-Way Filter Dashboard:** Filter scanned items across **Total Scanned**, **Approved for Download**, **Skipped Normal Files (On Disk)**, and **Skipped Bloat Files**.
+- **Editable Destination Folder:** Automatically infers the folder title, strips redundant suffixes (`Drive`, `- Google Drive`), and allows real-time destination renaming before download.
+- **Disk Existence Indicator:** Live status badge informs whether the destination is an **Existing Folder (on disk)** or a **New Folder (will be created)**.
+- **Selective Test Downloads:** Checkbox multi-select, a master select-all toggle, and single-file download triggers let you test downloads on specific files before committing to a full folder batch.
+- **Instant Re-Apply Rules Engine:** Caches the remote scan in memory so you can tweak exclusions, change the destination name, or re-check disk status in under 100ms without re-crawling Google Drive.
 
-### 3. Automated Path & File Sanitization
+### 3. Connection Resilience & Audit History
 
-- **Domain & Handle Stripping:** Removes domain patterns (`*.vercel.app`, `*.blogspot.com`), URL paths, social handles (`@ChannelName`), and bracket noise.
-- **Subfolder Collapse:** Detects duplicate nested folder hierarchies generated during Google Drive batch packaging and flattens them into clean directories.
-
-### 4. Magic-Byte Binary Extension Repair
-
-- **File Signature Inspection:** Automatically reads binary magic numbers from initial file bytes after transfer.
-- **Automatic Renaming:** Restores missing or incorrect extensions for common media types, including:
-  - **Video:** `.mp4`, `.mkv`, `.avi`, `.mov`
-  - **Audio:** `.mp3`, `.wav`, `.aac`
-  - **Archives:** `.zip`, `.tar.gz`, `.7z`, `.rar`
-  - **Documents:** `.pdf`, `.docx`
-  - **Images:** `.png`, `.jpg`, `.webp`
-
-### 5. Idempotent Disk Synchronization
-
-- **Stem-Based Fuzzy Comparison:** Compares incoming files against existing disk files in `./downloads` using fuzzy stem normalization.
-- **Bandwidth & Storage Protection:** Prevents duplicate downloads even if previous runs applied different naming sanitization rules.
-
-### 6. Real-Time SSE Dashboard
-
-- **Reactive Glassmorphism Interface:** Built with Alpine.js and Tailwind CSS with real-time UI updates.
-- **Dual Progress Metrics:** Real-time visibility into overall batch completion and active single-file transfer progress.
-- **Live Event Stream:** Direct Server-Sent Events (SSE) pipe log output from the backend straight into the UI console.
-
-### 7. SQLite Audit & Execution History
-
-- **Persistent State:** Tracks job metrics, timestamps, targeted links, files processed, and statuses in `.aether_history.db`.
-- **Slide-out History Drawer:** Review previous jobs, re-inject folder URLs into the scan input with one click, copy links, or selectively purge history records.
+- **Sleep & Disconnect Resilience:** Active background downloads and console logs survive browser refreshes, connection drops, and laptop sleep cycles via server-side session persistence.
+- **Master Plan Preservation:** Retains the full inventory of scanned items—including all skipped bloatware and on-disk files—in server memory across reconnects and reloads.
+- **Persistent Session Resume Banner:** Displays a completion summary banner when returning to finished jobs, with a single manual **Start New Task** trigger to clear the workspace.
+- **Execution Audit Log:** SQLite-backed audit drawer storing dates, folder names, Drive URLs, status outcomes, and file transfer metrics indefinitely until manually purged.
+- **Live SSE Terminal:** Streams real-time transfer progress, speeds, file counts, and console events directly to the browser UI.
 
 ---
 
-## Deep-Dive Architecture
+## Architecture
 
 ```text
 aetherdrive/
 ├── backend/
-│   ├── app.py              # FastAPI application server, SSE pub/sub, SQLite operations
-│   ├── core.py             # Heuristic parser, regex sanitizers, magic-byte inspection
-│   └── requirements.txt    # Python runtime dependencies
+│   ├── app.py              # FastAPI server, SSE streaming, SQLite audit store, session cache
+│   └── core.py             # Drive scraper, regex sanitizers, magic bytes repair, heuristics
 ├── frontend/
-│   └── index.html          # Alpine.js state engine with Tailwind CSS interface
-├── downloads/              # Mounted volume for completed and processed files
-├── docker-compose.yml      # Container orchestration specification
-└── Dockerfile              # Multi-architecture container build recipe
+│   └── index.html          # Single-page interface built with Alpine.js & Tailwind CSS
+├── Dockerfile              # Multi-stage container definition (port 8070)
+├── docker-compose.yml      # Compose spec with /downloads and /appdata mounts
+└── README.md
 ```
 
 ### Data Flow Lifecycle
@@ -112,34 +81,34 @@ aetherdrive/
 [Google Drive URL]
         │
         ▼
-[FastAPI /api/scan] ──► [Inspect Folder Metadata & Structure]
+[Folder Scrape] ──► [Inspect Folder Metadata & Structure]
         │
         ▼
-[Engine Sanitization] ──► Strip Domains, URL Watermarks & Bloat Patterns
+[Engine Sanitization] ──► Strip Domains, Handles, Watermarks & Bloat Patterns
         │
         ▼
-[Local Disk Comparison] ──► Match against existing files in ./downloads
+[Local Disk Comparison] ──► Match against existing files in /downloads
         │
         ▼
-[Frontend Review] ──► Visual Plan Display (Download vs Skipped)
+[Planning Workspace] ──► 4-Way Plan View (Approved / On Disk / Bloat / Total)
         │
-        ▼ (User Confirms Ingestion)
-[FastAPI /api/download] ──► Background Download Worker
+        ▼ (User Executes Download)
+[Background Download Worker]
         │
         ├──► Real-Time SSE Logs & Counters ──► [Browser UI]
         │
         ▼
-[Post-Download Magic Byte Repair] ──► Inspect Hex Signatures & Fix Extensions
+[Post-Download Magic Byte Repair] ──► Inspect Signatures & Fix Extensions
         │
         ▼
-[SQLite History DB] ──► Record Execution Log (.aether_history.db)
+[SQLite Audit Log] ──► Record Execution History (/appdata/aether_history.db)
 ```
 
 ---
 
-## Deployment & Quick Start
+## Quick Start
 
-### Option 1: Docker Compose (Recommended)
+### Run with Docker Compose
 
 Save the following configuration as `docker-compose.yml`:
 
@@ -149,9 +118,14 @@ services:
     image: ghcr.io/riyaz-hussain/aetherdrive:latest
     container_name: aetherdrive
     ports:
-      - "8080:8080"
+      - "8070:8070"
+    environment:
+      - DATA_DIR=/appdata
+      - DOWNLOAD_DIR=/downloads
     volumes:
-      - ./downloads:/downloads
+      # Replace the left-hand paths with folders on your host
+      - /volume/DownloadsFolder:/downloads
+      - /volume/docker/appdata/aetherdrive:/appdata
     restart: unless-stopped
 ```
 
@@ -161,46 +135,19 @@ Start the service:
 docker compose up -d
 ```
 
-### Option 2: Docker CLI
-
-```bash
-docker run -d \
-  --name aetherdrive \
-  -p 8080:8080 \
-  -v $(pwd)/downloads:/downloads \
-  --restart unless-stopped \
-  ghcr.io/riyaz-hussain/aetherdrive:latest
-```
-
-Open [http://localhost:8080](http://localhost:8080) in your web browser.
+Access the web interface at `http://<your-host-ip>:8070`.
 
 ---
 
-## User Interface & Dashboard Guide
+## Usage Guide
 
-### 1. The Ingestion Form
-
-- **Folder Link:** Enter any public or shared Google Drive folder URL.
-- **Exclude Folders:** Comma-separated wildcards to ignore entire subtrees (e.g., `*Bonus*, *Archive*`).
-- **Exclude Files:** Pre-populated with heuristic defaults (`*500$*`, `*bundle*`, `*join telegram*`). Adjust as needed.
-
-### 2. Execution Summary Cards
-
-- **To Download:** Displays count and total estimated size of sanitized, approved files.
-- **Skipped / Filtered:** Quantifies files bypassed due to bloat filters or disk-sync matching.
-
-### 3. Execution Plan Breakdown
-
-- **Green Badges (Download):** Highlights new items, showing sanitized folder paths and target file names.
-- **Yellow/Red Badges (Skipped):** Explicitly labels why an item was ignored (e.g., `Matched Bloat Rule`, `File Already On Disk`).
-
-### 4. Interactive Slide-Out History Drawer
-
-Click **History** in the top-right header to slide open previous jobs.
-
-- **Use Link:** Injects a historical URL directly into the scan input.
-- **Copy Link:** Copies the folder URL to your system clipboard.
-- **Delete / Clear All:** Cleanly manage individual or batch audit entries.
+1. **Scan a Folder:** Paste any public Google Drive folder link and click **Inspect & Generate Plan**.
+2. **Review Plan:** Inspect the 4 tab categories to verify which files are approved, skipped on disk, or flagged as bloatware.
+3. **Customize Destination:** Edit the **Destination Folder** field if you want a custom subfolder name under `/downloads/`.
+4. **Adjust Exclusions:** Click **Exclusions** in the top navigation to add persistent patterns (e.g., `*trailer*`, `*promo*`) that persist in SQLite.
+5. **Re-Apply Rules:** Click **Re-Apply Rules** to instantly recalculate the plan against local disk contents without re-scraping Google Drive.
+6. **Download:** Click **Execute Download** for all approved files, or select individual checkboxes to run a partial test download.
+7. **Start Fresh:** When a task completes, review the summary and click **Start New Task** to clear the workspace for your next link.
 
 ---
 
@@ -224,16 +171,27 @@ Course Masterclass/01 - Introduction.mp4
 
 ### Magic-Byte Header Table
 
-During post-processing, files missing a valid extension have their first 16 bytes inspected:
+During post-processing, files missing a valid extension have their first bytes inspected:
 
-| File Type | Header Magic Bytes (Hex) | Restored Extension |
+| File Type | Header Magic Bytes | Restored Extension |
 | :--- | :--- | :--- |
 | MP4 Video | `....ftypmp42` or `....ftypisom` | `.mp4` |
 | MKV Video | `1A 45 DF A3` | `.mkv` |
-| ZIP Archive | `50 4B 03 04` | `.zip` |
+| ZIP Archive | `50 4B 03 04` (`PK\x03\x04`) | `.zip` |
+| RAR Archive | `Rar!` | `.rar` |
+| MP3 Audio | `ID3` | `.mp3` |
+| WAV Audio | `RIFF` | `.wav` |
 | PDF Document | `25 50 44 46` (`%PDF`) | `.pdf` |
 | PNG Image | `89 50 4E 47 0D 0A 1A 0A` | `.png` |
 | JPEG Image | `FF D8 FF` | `.jpg` |
+
+---
+
+## Execution Audit Log & Data Retention
+
+- **Storage Location:** All historical runs are recorded in `/appdata/aether_history.db` (SQLite).
+- **Retention Policy:** Indefinite (no automatic rolling TTL or expiration).
+- **Management:** View, reload links, or delete specific entries directly from the **History** drawer. You can also purge all past records with **Clear All History Records**.
 
 ---
 
@@ -246,7 +204,7 @@ The backend exposes an asynchronous OpenAPI interface:
 | `POST` | `/api/scan` | Analyzes Drive folder link, runs filters, and returns an execution plan. |
 | `POST` | `/api/download` | Initiates asynchronous background downloading for approved plan items. |
 | `GET` | `/api/events` | SSE endpoint pushing real-time progress, counters, and log output. |
-| `GET` | `/api/history` | Fetches historical runs from `.aether_history.db`. |
+| `GET` | `/api/history` | Fetches historical runs from the audit database. |
 | `DELETE` | `/api/history/{id}` | Deletes a specific historical record. |
 | `DELETE` | `/api/history` | Purges all records from the history database. |
 
@@ -256,9 +214,9 @@ The backend exposes an asynchronous OpenAPI interface:
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `PORT` | Integer | `8080` | Internal and exposed service port. |
-| `/downloads` | Volume Path | Required | Target host filesystem directory for downloaded files. |
-| `SQLITE_DB` | Path | `/downloads/.aether_history.db` | Location of the persistent audit database. |
+| `PORT` | Integer | `8070` | Internal and exposed service port. |
+| `DOWNLOAD_DIR` | Path | `/downloads` | Container path where completed files are written. Mount a host folder here. |
+| `DATA_DIR` | Path | `/appdata` | Container path for the SQLite audit database and persistent state. Mount a host folder here. |
 
 ---
 
@@ -266,20 +224,28 @@ The backend exposes an asynchronous OpenAPI interface:
 
 **Q: The download fails with "Too many requests" or rate-limiting errors.**
 
-A: Google Drive applies temporary quota restrictions on heavily shared public files. Wait a few hours or switch network paths. AetherDrive automatically implements exponential backoff retries when fetching metadata.
-
-**Q: Why did a folder remain empty in the "Exclude Folders" input?**
-
-A: The heuristic engine auto-populates terms only when it discovers known promotional markers. If promotional text is located entirely in file names, the file filter populates while the folder filter remains empty.
+A: Google Drive applies temporary quota restrictions on heavily shared public files. Wait a few hours or switch network paths.
 
 **Q: How do I change the downloads directory on my host machine?**
 
-A: Edit the left side of the volume mapping in `docker-compose.yml`:
+A: Edit the left side of the `/downloads` volume mapping in `docker-compose.yml`:
 
 ```yaml
 volumes:
   - /Volumes/MyExternalDrive/Media:/downloads
 ```
+
+**Q: Will my history survive a container update?**
+
+A: Yes, as long as `/appdata` is mapped to a host folder. The audit log lives in `/appdata/aether_history.db`.
+
+---
+
+## Tech Stack
+
+- **Backend:** Python 3.11, FastAPI, Uvicorn, SQLite3, `sse-starlette`, `gdown`
+- **Frontend:** Alpine.js, Tailwind CSS (CDN)
+- **Deployment:** Docker, GitHub Actions (CI/CD Container Registry), Portainer
 
 ---
 
