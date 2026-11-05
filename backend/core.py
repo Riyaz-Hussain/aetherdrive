@@ -2,6 +2,7 @@ import os
 import re
 import math
 import fnmatch
+import unicodedata
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import requests
@@ -39,6 +40,16 @@ def sanitize_name(name: str) -> str:
     cleaned = re.sub(r'[_\-\.]{2,}', ' ', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned if cleaned else name.strip()
+
+def sanitize_destination_name(name: str) -> str:
+    cleaned = sanitize_name(name)
+    cleaned = ''.join(
+        char for char in cleaned
+        if unicodedata.category(char) not in {'So', 'Sk', 'Me', 'Cf'}
+        and char not in {'\ufe0e', '\ufe0f', '\u200d', '\u20e3'}
+    )
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned if cleaned else "AetherDrive_Download"
 
 def sanitize_path_tree(path_str: str) -> str:
     parts = Path(path_str).parts
@@ -138,7 +149,11 @@ def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Di
     first_path = remote_files[0].path if hasattr(remote_files[0], 'path') else remote_files[0].get('path', '')
     raw_root_title = Path(first_path).parts[0] if first_path else "AetherDrive_Download"
 
-    clean_destination_title = web_title if web_title else sanitize_name(re.sub(r'[\s\-_–—]+Google(?:\s+Drive)?$', '', raw_root_title, flags=re.IGNORECASE))
+    clean_destination_title = sanitize_destination_name(
+        web_title if web_title else re.sub(
+            r'[\s\-_–—]+Google(?:\s+Drive)?$', '', raw_root_title, flags=re.IGNORECASE
+        )
+    )
 
     items = []
     for f in remote_files:
@@ -149,7 +164,7 @@ def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Di
         clean_sub = sanitize_path_tree(raw_p)
 
         sub_parts = Path(clean_sub).parts
-        if len(sub_parts) > 1 and sub_parts[0].lower() == clean_destination_title.lower():
+        if len(sub_parts) > 1 and sanitize_destination_name(sub_parts[0]).lower() == clean_destination_title.lower():
             clean_sub = str(Path(*sub_parts[1:]))
 
         bloat = is_bloatware(raw_p, exclusions)
