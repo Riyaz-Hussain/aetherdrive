@@ -160,9 +160,11 @@
 
             <!-- Execution Actions -->
             <div class="flex items-center gap-2 pt-2 sm:pt-0 w-full lg:w-auto">
-              <button @click="toggleSelectAll()" class="flex-1 sm:flex-initial px-3 py-2 text-xs font-medium rounded-xl border border-slate-700 hover:bg-slate-800 text-slate-300 transition text-center">
-                <i class="fa-solid fa-check-double mr-1"></i> Toggle All
-              </button>
+              <label class="flex flex-1 sm:flex-initial md:hidden items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded-xl border border-slate-700 text-slate-300">
+                <input type="checkbox" :checked="allDisplayedItemsSelected" @change="setAllSelected($event.target.checked)"
+                       class="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer" />
+                <span>Select All</span>
+              </label>
               <template x-if="!isRunning">
                 <button @click="startDownload()" :disabled="selectedCount === 0"
                         class="flex-1 sm:flex-initial px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20">
@@ -223,7 +225,14 @@
             <table class="w-full text-left text-xs border-collapse">
               <thead class="sticky top-0 bg-slate-950 border-b border-slate-800 text-slate-400 font-semibold z-10">
                 <tr>
-                  <th class="py-2.5 px-4 w-12 text-center">Sel</th>
+                  <th class="py-2.5 px-2 w-16 text-center">
+                    <label class="inline-flex items-center justify-center gap-1.5 cursor-pointer" title="Select all visible items">
+                      <span>Sel</span>
+                      <input type="checkbox" :checked="allDisplayedItemsSelected" @change="setAllSelected($event.target.checked)"
+                             aria-label="Select all visible items"
+                             class="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer" />
+                    </label>
+                  </th>
                   <th class="py-2.5 px-4">Sanitized Path</th>
                   <th class="py-2.5 px-4">Original Google Drive Path</th>
                   <th class="py-2.5 px-4 w-24 text-right">Size</th>
@@ -593,11 +602,9 @@
           }
         },
 
-        toggleSelectAll() {
+        setAllSelected(selected) {
           if (!this.plan) return;
-          const current = this.displayedItems;
-          const allSelected = current.every(i => i.selected);
-          current.forEach(i => i.selected = !allSelected);
+          this.displayedItems.forEach(item => item.selected = selected);
         },
 
         get approvedItems() {
@@ -615,6 +622,9 @@
           if (this.activeTab === 'on_disk') return this.onDiskItems;
           if (this.activeTab === 'bloat') return this.bloatItems;
           return this.plan.items;
+        },
+        get allDisplayedItemsSelected() {
+          return this.displayedItems.length > 0 && this.displayedItems.every(item => item.selected);
         },
         get selectedCount() {
           return (this.plan?.items || []).filter(i => i.selected).length;
