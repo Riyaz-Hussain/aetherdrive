@@ -354,6 +354,11 @@ def track_cleanup_file(path: Path):
         stat = path.stat()
         state.cleanup_paths[relative] = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
 
+def format_source_datetime(value: datetime.datetime) -> str:
+    hour = value.hour % 12 or 12
+    meridiem = "AM" if value.hour < 12 else "PM"
+    return f"{value.strftime('%B')} {value.day}, {value.year} at {hour}:{value.minute:02d}:{value.second:02d} {meridiem}"
+
 async def run_download_worker(
     dest_folder: str,
     approved_items: List[Dict[str, Any]],
@@ -500,11 +505,9 @@ async def start_download(req: DownloadRequest):
             raise HTTPException(status_code=400, detail="The supplied local timestamp is invalid.") from err
         if local_timestamp.utcoffset() is None:
             raise HTTPException(status_code=400, detail="The supplied local timestamp must include a UTC offset.")
-        local_timezone = local_timestamp.tzinfo
     else:
-        local_timezone = datetime.datetime.now().astimezone().tzinfo
-        local_timestamp = datetime.datetime.now(local_timezone)
-    timezone_name = req.timezone or local_timestamp.tzname() or "Local"
+        local_timestamp = datetime.datetime.now().astimezone()
+    timezone_name = (req.timezone if req.local_datetime else None) or local_timestamp.tzname() or "Local"
 
     dest_root = Path(req.destination_folder.strip()) if req.destination_folder.strip() else Path("Downloads")
     source_url_path = DOWNLOAD_DIR / dest_root / "source_url.txt"
@@ -522,12 +525,17 @@ async def start_download(req: DownloadRequest):
         )
         if matching_line is None or existing_lines[matching_line] == url_to_save:
             source_folder_name = (req.source_folder_name or "").strip() or req.destination_folder.strip()
-            timestamp = local_timestamp.isoformat(timespec="seconds")
+            utc_timestamp = local_timestamp.astimezone(datetime.timezone.utc)
+            offset_seconds = int(local_timestamp.utcoffset().total_seconds())
+            offset_sign = "+" if offset_seconds >= 0 else "-"
+            offset_hours, offset_remainder = divmod(abs(offset_seconds), 3600)
+            offset_minutes = offset_remainder // 60
             source_entry = [
-                f"Google Drive: {source_folder_name}",
-                f"Date/Time: {timestamp}",
-                f"Time Zone: {timezone_name}",
-                f"URL: {url_to_save}"
+                f"Google Drive folder: {source_folder_name}",
+                f"Download started (local time): {format_source_datetime(local_timestamp)}",
+                f"Time zone: {timezone_name} (UTC{offset_sign}{offset_hours:02d}:{offset_minutes:02d})",
+                f"Same time in UTC: {format_source_datetime(utc_timestamp)} UTC",
+                f"Source URL: {url_to_save}"
             ]
             if matching_line is not None:
                 existing_lines[matching_line:matching_line + 1] = source_entry
@@ -540,39 +548,6 @@ async def start_download(req: DownloadRequest):
                     if existing_content:
                         source_file.write("\n")
                     source_file.write("\n".join(source_entry) + "\n")
-        else:
-            timestamp_index = next(
-                (
-                    index for index in range(matching_line - 1, -1, -1)
-                    if existing_lines[index].startswith("Date/Time: ")
-                ),
-                None
-            )
-            if timestamp_index is not None:
-                try:
-                    saved_timestamp = datetime.datetime.fromisoformat(existing_lines[timestamp_index][11:])
-                except ValueError:
-                    pass
-                else:
-                    existing_lines[timestamp_index] = (
-                        f"Date/Time: {saved_timestamp.astimezone(local_timezone).isoformat(timespec='seconds')}"
-                    )
-                    timezone_index = next(
-                        (
-                            index for index in range(timestamp_index + 1, matching_line)
-                            if existing_lines[index].startswith("Time Zone: ")
-                        ),
-                        None
-                    )
-                    timezone_line = f"Time Zone: {timezone_name}"
-                    if timezone_index is None:
-                        existing_lines.insert(timestamp_index + 1, timezone_line)
-                    else:
-                        existing_lines[timezone_index] = timezone_line
-                    updated_content = "\n".join(existing_lines)
-                    if existing_content.endswith("\n"):
-                        updated_content += "\n"
-                    source_url_path.write_text(updated_content, encoding="utf-8")
     except (OSError, UnicodeError) as err:
         raise HTTPException(
             status_code=500,
