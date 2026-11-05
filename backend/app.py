@@ -1,496 +1,371 @@
-import asyncio
 import os
-import sqlite3
 import json
-from datetime import datetime
+import sqlite3
+import datetime
+import asyncio
 from pathlib import Path
-from typing import Optional, List, Dict, Any
-
-from fastapi import FastAPI, BackgroundTasks, HTTPException
-from fastapi.responses import HTMLResponse
+from typing import List, Dict, Any, Optional
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from backend.core import (
-    parse_drive_folder,
-    download_folder_plan,
-    apply_heuristics,
-    repair_extensions,
-    fetch_folder_root_name,
-    extract_drive_folder_id,
-    clean_root_folder_name,
-    format_size,
+    DATA_DIR, DOWNLOAD_DIR, COOKIE_FILE,
+    inspect_google_drive, check_file_on_disk,
+    repair_extension_magic_bytes, format_size, get_cookie_file_path
 )
+import gdown
 
 app = FastAPI(title="AetherDrive")
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/downloads"))
-DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
-
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
+# Persistent database setup
 DB_PATH = DATA_DIR / "aether_history.db"
 
-app.mount("/static", StaticFiles(directory=BASE_DIR / "frontend"), name="static")
-
-event_subscribers: List[asyncio.Queue] = []
-cancel_event = asyncio.Event()
-
-current_download_state: Dict[str, Any] = {
-    "is_downloading": False,
-    "download_finished": False,
-    "current_file": "",
-    "completed_files": 0,
-    "total_files": 0,
-    "percentage": 0,
-    "status": "idle",
-    "folder_url": "",
-    "destination_folder": "",
-    "folder_exists": False,
-    "plan": [],
-    "raw_items": [],
-    "logs": []
-}
-
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            folder_name TEXT DEFAULT '',
-            folder_url TEXT NOT NULL,
-            total_files INTEGER DEFAULT 0,
-            downloaded_files INTEGER DEFAULT 0,
-            skipped_files INTEGER DEFAULT 0,
-            status TEXT NOT NULL
-        )
-    """)
-    cursor.execute("PRAGMA table_info(history)")
-    columns = [col[1] for col in cursor.fetchall()]
-    if "folder_name" not in columns:
-        cursor.execute("ALTER TABLE history ADD COLUMN folder_name TEXT DEFAULT ''")
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    conn.close()
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                folder_name TEXT,
+                url TEXT,
+                total_files INTEGER,
+                downloaded_files INTEGER,
+                skipped_files INTEGER,
+                failed_files INTEGER,
+                status TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS exclusion_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern TEXT UNIQUE
+            )
+        """)
+        # Seed default exclusions if empty
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM exclusion_rules")
+        if cursor.fetchone()[0] == 0:
+            defaults = [
+                "*trailer*", "*sample*", "*preview*", "*bonus*", "*promo*",
+                "*reels*", "*short*", "*teaser*", "*advert*", "*watermark*",
+                "*.nfo", "*.txt", "*.url", "*.lnk", "*.exe"
+            ]
+            conn.executemany("INSERT OR IGNORE INTO exclusion_rules (pattern) VALUES (?)", [(d,) for d in defaults])
+        conn.commit()
 
 init_db()
 
-async def broadcast_event(data: Dict[str, Any]):
-    if data.get("type") == "log" and data.get("message"):
-        current_download_state["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {data['message']}")
-        if len(current_download_state["logs"]) > 200:
-            current_download_state["logs"].pop(0)
+# Application State
+class JobState:
+    def __init__(self):
+        self.is_running = False
+        self.cancel_requested = False
+        self.current_plan: Optional[Dict[str, Any]] = None
+        self.master_items: List[Dict[str, Any]] = []
+        self.logs: List[str] = []
+        self.progress: Dict[str, Any] = {
+            "current": 0,
+            "total": 0,
+            "percent": 0,
+            "speed": "",
+            "active_file": ""
+        }
+        self.completed_summary: Optional[Dict[str, Any]] = None
 
-    message = json.dumps(data)
-    for q in event_subscribers:
-        await q.put(message)
+state = JobState()
 
 class ScanRequest(BaseModel):
-    folder_url: str
-    destination_folder: Optional[str] = ""
-    exclusions: Optional[str] = ""
+    url: str
 
-class ReparseRequest(BaseModel):
-    raw_items: List[Dict[str, Any]]
-    folder_url: Optional[str] = ""
-    fallback_root: Optional[str] = ""
-    destination_folder: Optional[str] = ""
-    exclusions: Optional[str] = ""
+class CookiePayload(BaseModel):
+    cookie_content: str
 
-class FolderCheckRequest(BaseModel):
-    folder_name: str
-
-class DownloadRequest(BaseModel):
-    plan: List[Dict[str, Any]]
-    master_plan: Optional[List[Dict[str, Any]]] = None
-    folder_url: str
-    folder_name: Optional[str] = ""
+class ReapplyRequest(BaseModel):
+    destination_folder: str
 
 class ExclusionsUpdate(BaseModel):
-    exclusions: List[str]
+    patterns: List[str]
 
-@app.get("/", response_class=HTMLResponse)
-async def serve_index():
-    index_file = BASE_DIR / "frontend" / "index.html"
-    return HTMLResponse(content=index_file.read_text(encoding="utf-8"))
+class DownloadRequest(BaseModel):
+    destination_folder: str
+    items: List[Dict[str, Any]]
+
+# --- Cookie Management Endpoints ---
+
+@app.get("/api/cookies/status")
+def get_cookie_status():
+    has_cookies = COOKIE_FILE.exists() and COOKIE_FILE.stat().st_size > 10
+    file_size = COOKIE_FILE.stat().st_size if has_cookies else 0
+    mod_time = ""
+    if has_cookies:
+        mtime = datetime.datetime.fromtimestamp(COOKIE_FILE.stat().st_mtime)
+        mod_time = mtime.strftime("%Y-%m-%d %H:%M:%S")
+    return {
+        "has_cookies": has_cookies,
+        "file_size": file_size,
+        "last_modified": mod_time
+    }
+
+@app.post("/api/cookies")
+def save_cookies(payload: CookiePayload):
+    text = payload.cookie_content.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Cookie content cannot be empty.")
+    
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(COOKIE_FILE, "w", encoding="utf-8") as f:
+        f.write(text + "\n")
+    return {"status": "success", "message": "Cookies saved successfully.", "size": len(text)}
+
+@app.delete("/api/cookies")
+def delete_cookies():
+    if COOKIE_FILE.exists():
+        COOKIE_FILE.unlink()
+    return {"status": "success", "message": "Cookies deleted. Session reverted to anonymous."}
+
+# --- Audit & Exclusions Endpoints ---
+
+@app.get("/api/exclusions")
+def get_exclusions():
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT pattern FROM exclusion_rules ORDER BY id ASC")
+        rows = cursor.fetchall()
+        return {"exclusions": [r[0] for r in rows]}
+
+@app.post("/api/exclusions")
+def update_exclusions(payload: ExclusionsUpdate):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM exclusion_rules")
+        conn.executemany("INSERT OR IGNORE INTO exclusion_rules (pattern) VALUES (?)", [(p.strip(),) for p in payload.patterns if p.strip()])
+        conn.commit()
+    return {"status": "success", "exclusions": payload.patterns}
+
+@app.get("/api/history")
+def get_history():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM audit_logs ORDER BY id DESC")
+        rows = cursor.fetchall()
+        return {"history": [dict(r) for r in rows]}
+
+@app.delete("/api/history/{record_id}")
+def delete_history_record(record_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM audit_logs WHERE id = ?", (record_id,))
+        conn.commit()
+    return {"status": "success"}
+
+@app.delete("/api/history")
+def clear_all_history():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM audit_logs")
+        conn.commit()
+    return {"status": "success"}
+
+# --- Scanning & Plan Management ---
+
+@app.post("/api/scan")
+def scan_folder(req: ScanRequest):
+    if state.is_running:
+        raise HTTPException(status_code=400, detail="A download task is currently active.")
+    
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT pattern FROM exclusion_rules")
+        exclusions = [r[0] for r in cursor.fetchall()]
+
+    try:
+        plan = inspect_google_drive(req.url, exclusions)
+        state.current_plan = plan
+        state.master_items = plan["items"]
+        state.completed_summary = None
+        state.logs = [f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔍 Scanned folder: {plan['destination_folder']} ({len(plan['items'])} items found)"]
+        if plan.get("cookie_active"):
+            state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✓ Authenticated session active (cookies.txt applied)")
+        else:
+            state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ℹ Running with anonymous session (no cookies.txt found)")
+        return plan
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/reapply")
+def reapply_rules(req: ReapplyRequest):
+    if not state.master_items:
+        raise HTTPException(status_code=400, detail="No active scan in memory to reapply.")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT pattern FROM exclusion_rules")
+        exclusions = [r[0] for r in cursor.fetchall()]
+
+    from backend.core import is_bloatware
+    dest = req.destination_folder.strip()
+    dest_exists = (DOWNLOAD_DIR / dest).exists()
+
+    recalculated = []
+    for item in state.master_items:
+        raw_p = item["original_path"]
+        size = item["size"]
+        clean_sub = item["sanitized_path"]
+        bloat = is_bloatware(raw_p, exclusions)
+        on_disk = check_file_on_disk(clean_sub, size) if not bloat else False
+
+        if bloat:
+            cat = "bloat"
+        elif on_disk:
+            cat = "on_disk"
+        else:
+            cat = "approved"
+
+        item["category"] = cat
+        item["selected"] = (cat == "approved")
+        recalculated.append(item)
+
+    state.master_items = recalculated
+    if state.current_plan:
+        state.current_plan["destination_folder"] = dest
+        state.current_plan["destination_exists_on_disk"] = dest_exists
+        state.current_plan["items"] = recalculated
+
+    return state.current_plan
+
+# --- SSE Streaming & Execution ---
 
 @app.get("/api/events")
-async def events():
-    queue: asyncio.Queue = asyncio.Queue()
-    event_subscribers.append(queue)
-
+async def sse_stream():
     async def event_generator():
-        try:
-            while True:
-                data = await queue.get()
-                yield dict(data=data)
-        except asyncio.CancelledError:
-            if queue in event_subscribers:
-                event_subscribers.remove(queue)
+        last_log_count = 0
+        while True:
+            if len(state.logs) > last_log_count:
+                new_logs = state.logs[last_log_count:]
+                last_log_count = len(state.logs)
+                for log in new_logs:
+                    yield {"event": "log", "data": json.dumps({"message": log})}
+
+            yield {
+                "event": "status",
+                "data": json.dumps({
+                    "is_running": state.is_running,
+                    "progress": state.progress,
+                    "completed_summary": state.completed_summary
+                })
+            }
+            await asyncio.sleep(0.5)
 
     return EventSourceResponse(event_generator())
 
-@app.get("/api/status")
-async def get_download_status():
-    folder = clean_root_folder_name(current_download_state.get("destination_folder", ""))
-    if folder:
-        current_download_state["folder_exists"] = (DOWNLOAD_DIR / folder).exists()
-    return current_download_state
+async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, Any]]):
+    state.is_running = True
+    state.cancel_requested = False
+    state.completed_summary = None
 
-@app.post("/api/reset")
-async def reset_workspace():
-    if not current_download_state["is_downloading"]:
-        current_download_state.update({
-            "is_downloading": False,
-            "download_finished": False,
-            "current_file": "",
-            "completed_files": 0,
-            "total_files": 0,
-            "percentage": 0,
-            "status": "idle",
-            "folder_url": "",
-            "destination_folder": "",
-            "folder_exists": False,
-            "plan": [],
-            "raw_items": [],
-            "logs": []
-        })
-    return {"status": "reset"}
-
-@app.post("/api/folder/status")
-async def check_folder_status(req: FolderCheckRequest):
-    folder = clean_root_folder_name(req.folder_name)
-    if not folder:
-        return {"exists": False, "folder_name": ""}
-    target_path = DOWNLOAD_DIR / folder
-    exists = target_path.exists() and target_path.is_dir()
-    return {"exists": exists, "folder_name": folder}
-
-@app.get("/api/settings/exclusions")
-async def get_exclusions():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE key = 'custom_exclusions'")
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        try:
-            return json.loads(row[0])
-        except Exception:
-            return []
-    return []
-
-@app.post("/api/settings/exclusions")
-async def save_exclusions(req: ExclusionsUpdate):
-    clean_list = list(set([x.strip() for x in req.exclusions if x.strip()]))
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO settings (key, value) VALUES ('custom_exclusions', ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    """, (json.dumps(clean_list),))
-    conn.commit()
-    conn.close()
-    return clean_list
-
-@app.post("/api/scan")
-async def scan_folder(req: ScanRequest):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT value FROM settings WHERE key = 'custom_exclusions'")
-        row = cursor.fetchone()
-        conn.close()
-
-        stored_exclusions = []
-        if row:
-            try:
-                stored_exclusions = json.loads(row[0])
-            except Exception:
-                pass
-
-        merged_exclusions = list(set(
-            stored_exclusions + [p.strip() for p in (req.exclusions or "").split(",") if p.strip()]
-        ))
-
-        folder_id = extract_drive_folder_id(req.folder_url)
-        detected_root = fetch_folder_root_name(folder_id) if folder_id else ""
-        root_name = clean_root_folder_name(req.destination_folder.strip()) or detected_root
-
-        raw_items = await parse_drive_folder(req.folder_url, custom_root=root_name)
-        plan = apply_heuristics(
-            raw_items,
-            download_dir=DOWNLOAD_DIR,
-            destination_root=root_name,
-            exclusions=",".join(merged_exclusions),
-        )
-
-        folder_exists = (DOWNLOAD_DIR / root_name).exists() if root_name else False
-
-        current_download_state["folder_url"] = req.folder_url
-        current_download_state["destination_folder"] = root_name
-        current_download_state["folder_exists"] = folder_exists
-        current_download_state["raw_items"] = raw_items
-        current_download_state["plan"] = plan
-
-        return {
-            "root_folder_name": root_name,
-            "detected_root": detected_root,
-            "folder_exists": folder_exists,
-            "raw_items": raw_items,
-            "plan": plan
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/reparse")
-async def reparse_cached(req: ReparseRequest):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT value FROM settings WHERE key = 'custom_exclusions'")
-        row = cursor.fetchone()
-        conn.close()
-
-        stored_exclusions = []
-        if row:
-            try:
-                stored_exclusions = json.loads(row[0])
-            except Exception:
-                pass
-
-        merged_exclusions = list(set(
-            stored_exclusions + [p.strip() for p in (req.exclusions or "").split(",") if p.strip()]
-        ))
-
-        root_name = clean_root_folder_name(req.destination_folder.strip())
-        if not root_name:
-            if req.fallback_root:
-                root_name = clean_root_folder_name(req.fallback_root)
-            elif req.folder_url:
-                f_id = extract_drive_folder_id(req.folder_url)
-                if f_id:
-                    root_name = fetch_folder_root_name(f_id)
-
-        plan = apply_heuristics(
-            req.raw_items,
-            download_dir=DOWNLOAD_DIR,
-            destination_root=root_name,
-            exclusions=",".join(merged_exclusions),
-        )
-
-        folder_exists = (DOWNLOAD_DIR / root_name).exists() if root_name else False
-
-        current_download_state["destination_folder"] = root_name
-        current_download_state["folder_exists"] = folder_exists
-        current_download_state["plan"] = plan
-
-        return {
-            "root_folder_name": root_name,
-            "folder_exists": folder_exists,
-            "plan": plan
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-async def run_download_job(items_to_download: List[Dict[str, Any]], master_plan: List[Dict[str, Any]], folder_url: str, folder_name: str = ""):
-    global cancel_event, current_download_state
-    cancel_event.clear()
-
-    total = len(items_to_download)
     downloaded = 0
-    status = "completed"
+    skipped = 0
+    failed = 0
+    total = len(approved_items)
+    state.progress = {"current": 0, "total": total, "percent": 0, "speed": "--", "active_file": ""}
 
-    clean_dest = clean_root_folder_name(folder_name)
+    cookie_path = get_cookie_file_path()
+    log_msg = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 Task initiated: {total} files queued for download."
+    state.logs.append(log_msg)
 
-    # Preserve master plan in session memory instead of truncating to download items
-    full_plan = master_plan if master_plan else current_download_state.get("plan", [])
+    for idx, item in enumerate(approved_items):
+        if state.cancel_requested:
+            state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛑 Task canceled by user.")
+            break
 
-    current_download_state.update({
-        "is_downloading": True,
-        "download_finished": False,
-        "completed_files": 0,
-        "total_files": total,
-        "percentage": 0,
-        "status": "downloading",
-        "folder_url": folder_url,
-        "destination_folder": clean_dest,
-        "plan": full_plan
-    })
+        file_id = item["id"]
+        rel_path = Path(item["sanitized_path"])
+        target_path = DOWNLOAD_DIR / rel_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
 
-    await broadcast_event({"type": "start", "total": total})
+        state.progress["current"] = idx + 1
+        state.progress["percent"] = int(((idx + 1) / total) * 100)
+        state.progress["active_file"] = rel_path.name
+        state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⬇️ Downloading ({idx+1}/{total}): {rel_path.name}")
 
-    try:
-        for item in items_to_download:
-            if cancel_event.is_set():
-                status = "cancelled"
-                await broadcast_event({"type": "log", "message": "⚠️ Download job was cancelled by user."})
-                break
+        try:
+            url = f"https://drive.google.com/uc?id={file_id}"
+            output = await asyncio.to_thread(
+                gdown.download,
+                url=url,
+                output=str(target_path),
+                quiet=True,
+                cookies_file=cookie_path
+            )
 
-            target_path = DOWNLOAD_DIR / item["sanitized_path"]
-
-            current_download_state.update({
-                "current_file": item["sanitized_path"],
-                "completed_files": downloaded + 1,
-                "percentage": int((downloaded / max(total, 1)) * 100)
-            })
-
-            await broadcast_event({
-                "type": "progress",
-                "current_file": item["sanitized_path"],
-                "index": downloaded + 1,
-                "total": total,
-                "percentage": int((downloaded / max(total, 1)) * 100)
-            })
-
-            success, detail = await download_folder_plan(item, target_path, cancel_event)
-
-            if cancel_event.is_set():
-                status = "cancelled"
-                break
-
-            if success:
-                repair_extensions(target_path)
+            if output and Path(output).exists():
+                repaired = repair_extension_magic_bytes(Path(output))
                 downloaded += 1
-
-                # Update in-place in full_plan so all items (including bloat) are preserved
-                for p_item in full_plan:
-                    if p_item.get("id") == item.get("id"):
-                        p_item["action"] = "skip"
-                        p_item["category"] = "skip_exists"
-                        p_item["reason"] = "File already exists in destination folder"
-                        if target_path.exists():
-                            p_item["size"] = target_path.stat().st_size
-                            p_item["size_str"] = format_size(target_path.stat().st_size)
-                        break
-
-                await broadcast_event({
-                    "type": "log",
-                    "message": f"✓ Saved: {item['sanitized_path']} ({detail})"
-                })
+                state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Completed: {repaired.name}")
             else:
-                await broadcast_event({
-                    "type": "log",
-                    "message": f"❌ Failed: {item['sanitized_path']} | Reason: {detail}"
-                })
+                failed += 1
+                state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Failed: {rel_path.name} | Reason: Rate limit or quota block")
+        except Exception as err:
+            failed += 1
+            state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Error: {rel_path.name} | {str(err)}")
 
-        folder_exists = (DOWNLOAD_DIR / clean_dest).exists() if clean_dest else False
+    state.is_running = False
+    state.completed_summary = {
+        "folder": dest_folder,
+        "total": total,
+        "downloaded": downloaded,
+        "failed": failed,
+        "status": "Canceled" if state.cancel_requested else ("Success" if failed == 0 else "Completed with errors")
+    }
 
-        if status != "cancelled":
-            if total > 0 and downloaded == 0:
-                status = "failed"
-            elif downloaded < total:
-                status = "partial"
-            else:
-                status = "completed"
-
-            current_download_state.update({
-                "is_downloading": False,
-                "download_finished": True,
-                "percentage": 100,
-                "status": status,
-                "completed_files": downloaded,
-                "folder_exists": folder_exists,
-                "plan": full_plan
-            })
-
-            await broadcast_event({
-                "type": "finished",
-                "status": status,
-                "downloaded": downloaded,
-                "total": total
-            })
-        else:
-            current_download_state.update({
-                "is_downloading": False,
-                "download_finished": True,
-                "status": "cancelled",
-                "completed_files": downloaded,
-                "folder_exists": folder_exists,
-                "plan": full_plan
-            })
-            await broadcast_event({
-                "type": "cancelled",
-                "status": "cancelled",
-                "downloaded": downloaded,
-                "total": total
-            })
-
-    except Exception as e:
-        status = "failed"
-        current_download_state.update({
-            "is_downloading": False,
-            "download_finished": True,
-            "status": "failed"
-        })
-        await broadcast_event({"type": "error", "message": str(e)})
-    finally:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO history (timestamp, folder_name, folder_url, total_files, downloaded_files, skipped_files, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+    # Record in SQLite audit log
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+            INSERT INTO audit_logs (timestamp, folder_name, url, total_files, downloaded_files, skipped_files, failed_files, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            clean_dest or "Unnamed Folder",
-            folder_url,
+            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            dest_folder,
+            "",
             total,
             downloaded,
-            len(full_plan) - total,
-            status
+            skipped,
+            failed,
+            state.completed_summary["status"]
         ))
         conn.commit()
-        conn.close()
 
 @app.post("/api/download")
-async def start_download(req: DownloadRequest, background_tasks: BackgroundTasks):
-    items_to_download = req.plan
-    master_plan = req.master_plan if req.master_plan else current_download_state.get("plan", req.plan)
-    background_tasks.add_task(run_download_job, items_to_download, master_plan, req.folder_url, req.folder_name or "")
-    return {"status": "started"}
+async def start_download(req: DownloadRequest):
+    if state.is_running:
+        raise HTTPException(status_code=400, detail="Download already running.")
+    selected = [it for it in req.items if it.get("selected")]
+    if not selected:
+        raise HTTPException(status_code=400, detail="No files selected.")
+    asyncio.create_task(run_download_worker(req.destination_folder, selected))
+    return {"status": "started", "queued": len(selected)}
 
 @app.post("/api/cancel")
-async def cancel_download():
-    global cancel_event
-    cancel_event.set()
-    await broadcast_event({"type": "log", "message": "🛑 Cancellation requested..."})
-    return {"status": "cancelling"}
+def cancel_task():
+    if not state.is_running:
+        return {"status": "idle"}
+    state.cancel_requested = True
+    return {"status": "canceling"}
 
-@app.get("/api/history")
-async def get_history():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM history ORDER BY id DESC")
-    rows = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return rows
-
-@app.delete("/api/history/{record_id}")
-async def delete_history(record_id: int):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM history WHERE id = ?", (record_id,))
-    conn.commit()
-    conn.close()
-    return {"status": "deleted"}
-
-@app.delete("/api/history")
-async def clear_history():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM history")
-    conn.commit()
-    conn.close()
+@app.post("/api/reset")
+def reset_workspace():
+    if state.is_running:
+        raise HTTPException(status_code=400, detail="Cannot reset while download is running.")
+    state.current_plan = None
+    state.master_items = []
+    state.completed_summary = None
+    state.logs = []
     return {"status": "cleared"}
+
+# Static Frontend Mount
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+if FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
