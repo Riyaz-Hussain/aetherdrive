@@ -46,7 +46,6 @@ def sanitize_path_tree(path_str: str) -> str:
     for part in parts:
         clean = sanitize_name(part)
         clean_part = clean if clean else part
-        # Prevent repeating consecutive directory names (e.g. "Book/Book" -> "Book")
         if not clean_parts or clean_parts[-1].lower() != clean_part.lower():
             clean_parts.append(clean_part)
     return str(Path(*clean_parts))
@@ -66,7 +65,6 @@ def is_bloatware(path_str: str, custom_exclusions: Optional[List[str]] = None) -
 def check_file_on_disk(destination_folder: str, sanitized_subpath: str, size: int) -> bool:
     target_path = DOWNLOAD_DIR / destination_folder / sanitized_subpath
     if target_path.exists() and target_path.is_file():
-        # When gdown returns 0 B during folder scans, existence with non-zero disk size counts as on disk
         if size == 0:
             return target_path.stat().st_size > 0
         disk_size = target_path.stat().st_size
@@ -94,8 +92,9 @@ def extract_remote_drive_title(url: str, cookie_path: Optional[str] = None) -> O
             match = re.search(r'<title>(.*?)</title>', resp.text, re.IGNORECASE | re.DOTALL)
             if match:
                 raw_title = match.group(1).strip()
-                cleaned = re.sub(r'(\s*-\s*Google Drive|\s*Drive)$', '', raw_title, flags=re.IGNORECASE).strip()
-                if cleaned and "Google Drive" not in cleaned:
+                # Strip ASCII and unicode hyphen/en-dash/em-dash followed by Google Drive / Google
+                cleaned = re.sub(r'[\s\-_–—]+Google(?:\s+Drive)?$', '', raw_title, flags=re.IGNORECASE).strip()
+                if cleaned and cleaned.lower() != "google drive":
                     return sanitize_name(cleaned)
     except Exception:
         pass
@@ -139,7 +138,7 @@ def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Di
     first_path = remote_files[0].path if hasattr(remote_files[0], 'path') else remote_files[0].get('path', '')
     raw_root_title = Path(first_path).parts[0] if first_path else "AetherDrive_Download"
 
-    clean_destination_title = web_title if web_title else sanitize_name(re.sub(r'(\s*-\s*Google Drive|\s*Drive)$', '', raw_root_title, flags=re.IGNORECASE))
+    clean_destination_title = web_title if web_title else sanitize_name(re.sub(r'[\s\-_–—]+Google(?:\s+Drive)?$', '', raw_root_title, flags=re.IGNORECASE))
 
     items = []
     for f in remote_files:
@@ -149,7 +148,6 @@ def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Di
 
         clean_sub = sanitize_path_tree(raw_p)
 
-        # Strip destination folder prefix if it appears inside clean_sub
         sub_parts = Path(clean_sub).parts
         if len(sub_parts) > 1 and sub_parts[0].lower() == clean_destination_title.lower():
             clean_sub = str(Path(*sub_parts[1:]))

@@ -218,7 +218,7 @@
 
         <!-- Filtered Items Table & Mobile Cards -->
         <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
-          <!-- Desktop Table (md and up) -->
+          <!-- Desktop Table -->
           <div class="hidden md:block max-h-[380px] overflow-y-auto">
             <table class="w-full text-left text-xs border-collapse">
               <thead class="sticky top-0 bg-slate-950 border-b border-slate-800 text-slate-400 font-semibold z-10">
@@ -255,7 +255,7 @@
             </table>
           </div>
 
-          <!-- Mobile Cards (below md) -->
+          <!-- Mobile Cards -->
           <div class="block md:hidden max-h-[380px] overflow-y-auto divide-y divide-slate-800/60 p-2 space-y-2">
             <template x-for="(item, idx) in displayedItems" :key="idx">
               <div class="p-3 bg-slate-950 rounded-xl border border-slate-800/80 text-xs space-y-2">
@@ -290,7 +290,8 @@
   </main>
 
   <!-- Cookie Session Modal -->
-  <div x-show="showCookieModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm">
+  <div x-show="showCookieModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm"
+       @click.self="showCookieModal = false">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-4">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
         <div class="flex items-center gap-2">
@@ -336,7 +337,8 @@
   </div>
 
   <!-- Exclusions Rules Modal -->
-  <div x-show="showExclusionsModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm">
+  <div x-show="showExclusionsModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm"
+       @click.self="showExclusionsModal = false">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-4">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
         <div class="flex items-center gap-2">
@@ -359,8 +361,10 @@
     </div>
   </div>
 
-  <!-- Execution Audit Log Drawer (Responsive Sheet) -->
-  <div x-show="showHistoryDrawer" x-cloak class="fixed inset-0 z-50 overflow-hidden bg-slate-950/70 backdrop-blur-sm flex justify-end">
+  <!-- Execution Audit Log Drawer (Click outside to dismiss) -->
+  <div x-show="showHistoryDrawer" x-cloak 
+       class="fixed inset-0 z-50 overflow-hidden bg-slate-950/70 backdrop-blur-sm flex justify-end"
+       @click.self="showHistoryDrawer = false">
     <div class="w-full sm:max-w-xl bg-slate-900 border-l border-slate-800 h-full p-4 sm:p-6 flex flex-col justify-between shadow-2xl">
       <div class="space-y-4 overflow-y-auto pr-1">
         <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -390,8 +394,11 @@
                 <div class="flex items-center gap-1.5">
                   <template x-if="item.url">
                     <div class="flex items-center gap-1.5">
-                      <button @click="copyHistoryUrl(item.url)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] transition flex items-center gap-1">
-                        <i class="fa-regular fa-copy"></i> Copy
+                      <button @click="copyHistoryUrl(item)" 
+                              class="px-2 py-1 rounded text-[11px] transition flex items-center gap-1"
+                              :class="copiedId === item.id ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-700/60' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'">
+                        <i :class="copiedId === item.id ? 'fa-solid fa-check text-emerald-400' : 'fa-regular fa-copy'"></i>
+                        <span x-text="copiedId === item.id ? 'Copied!' : 'Copy'"></span>
                       </button>
                       <button @click="useHistoryUrl(item.url)" class="px-2 py-1 rounded bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 text-[11px] transition flex items-center gap-1">
                         <i class="fa-solid fa-arrow-up-right-from-square"></i> Use Link
@@ -439,6 +446,7 @@
         exclusionsText: '',
         showHistoryDrawer: false,
         historyList: [],
+        copiedId: null,
 
         async initApp() {
           this.fetchCookieStatus();
@@ -667,9 +675,16 @@
           }
         },
 
-        copyHistoryUrl(url) {
-          navigator.clipboard.writeText(url);
-          alert('Copied URL to clipboard');
+        copyHistoryUrl(item) {
+          if (!item.url) return;
+          navigator.clipboard.writeText(item.url).then(() => {
+            this.copiedId = item.id;
+            setTimeout(() => {
+              if (this.copiedId === item.id) {
+                this.copiedId = null;
+              }
+            }, 2000);
+          });
         },
 
         useHistoryUrl(url) {
