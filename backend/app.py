@@ -6,7 +6,6 @@ import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -62,6 +61,7 @@ class JobState:
     def __init__(self):
         self.is_running = False
         self.cancel_requested = False
+        self.active_url = ""
         self.current_plan: Optional[Dict[str, Any]] = None
         self.master_items: List[Dict[str, Any]] = []
         self.logs: List[str] = []
@@ -90,6 +90,7 @@ class ExclusionsUpdate(BaseModel):
 
 class DownloadRequest(BaseModel):
     destination_folder: str
+    url: Optional[str] = ""
     items: List[Dict[str, Any]]
 
 # --- Cookie Management Endpoints ---
@@ -110,7 +111,7 @@ def get_cookie_status():
 
 @app.post("/api/cookies")
 def save_cookies(payload: CookiePayload):
-    text = payload.cookie_content.strip()
+    text = payload.cookie_content.replace('\r\n', '\n').replace('\r', '\n').strip()
     if not text:
         raise HTTPException(status_code=400, detail="Cookie content cannot be empty.")
     
@@ -180,6 +181,7 @@ def scan_folder(req: ScanRequest):
 
     try:
         plan = inspect_google_drive(req.url, exclusions)
+        state.active_url = req.url.strip()
         state.current_plan = plan
         state.master_items = plan["items"]
         state.completed_summary = None
@@ -258,7 +260,7 @@ async def sse_stream():
 
     return EventSourceResponse(event_generator())
 
-async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, Any]]):
+async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, Any]], original_url: str):
     state.is_running = True
     state.cancel_requested = False
     state.completed_summary = None
@@ -279,16 +281,20 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
             break
 
         file_id = item["id"]
-        rel_parts = Path(item["sanitized_path"]).parts
-        # Strip the scanned remote root segment to prevent duplicated folder hierarchy
-        relative_tail = Path(*rel_parts[1:]) if len(rel_parts) > 1 else Path(rel_parts[0])
-        target_path = DOWNLOAD_DIR / dest_root / relative_tail
+        rel_sub = Path(item["sanitized_path"])
+        
+        # If rel_sub already begins with dest_root name, don't duplicate it
+        if len(rel_sub.parts) > 1 and rel_sub.parts[0].lower() == dest_root.name.lower():
+            target_path = DOWNLOAD_DIR / dest_root / Path(*rel_sub.parts[1:])
+        else:
+            target_path = DOWNLOAD_DIR / dest_root / rel_sub
+
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
         state.progress["current"] = idx + 1
         state.progress["percent"] = int(((idx + 1) / total) * 100)
-        state.progress["active_file"] = relative_tail.name
-        state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⬇️ Downloading ({idx+1}/{total}): {relative_tail.name}")
+        state.progress["active_file"] = target_path.name
+        state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⬇️ Downloading ({idx+1}/{total}): {target_path.name}")
 
         try:
             url = f"https://drive.google.com/uc?id={file_id}"
@@ -306,10 +312,10 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
                 state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Completed: {repaired.name}")
             else:
                 failed += 1
-                state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Failed: {relative_tail.name} | Reason: Rate limit or quota block")
+                state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Failed: {target_path.name} | Reason: Rate limit or quota block")
         except Exception as err:
             failed += 1
-            state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Error: {relative_tail.name} | {str(err)}")
+            state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Error: {target_path.name} | {str(err)}")
 
     state.is_running = False
     state.completed_summary = {
@@ -327,7 +333,7 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
         """, (
             datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             str(dest_root),
-            "",
+            original_url or state.active_url,
             total,
             downloaded,
             skipped,
@@ -345,7 +351,8 @@ async def start_download(req: DownloadRequest):
         raise HTTPException(status_code=400, detail="No files selected.")
     
     state.completed_summary = None
-    asyncio.create_task(run_download_worker(req.destination_folder, selected))
+    url_to_save = req.url or state.active_url
+    asyncio.create_task(run_download_worker(req.destination_folder, selected, url_to_save))
     return {"status": "started", "queued": len(selected)}
 
 @app.post("/api/cancel")

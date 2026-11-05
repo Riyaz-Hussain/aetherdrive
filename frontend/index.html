@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>AetherDrive</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236366f1'><path d='M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z'/></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
     [x-cloak] { display: none !important; }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: #0f172a; }
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
   </style>
@@ -19,93 +19,93 @@
       x-data="aetherApp()" x-init="initApp()">
 
   <!-- Top Navigation Header -->
-  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-40 px-6 py-3.5 flex items-center justify-between">
-    <div class="flex items-center gap-3">
-      <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-        <i class="fa-solid fa-cloud-arrow-down text-lg text-white"></i>
+  <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-40 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-2.5">
+      <div class="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 flex-shrink-0">
+        <i class="fa-solid fa-cloud-arrow-down text-base sm:text-lg text-white"></i>
       </div>
       <div>
-        <h1 class="text-base font-bold tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">AetherDrive</h1>
-        <p class="text-xs text-slate-400">Sanitizer & Batch Downloader</p>
+        <h1 class="text-sm sm:text-base font-bold tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">AetherDrive</h1>
+        <p class="text-[10px] sm:text-xs text-slate-400 hidden xs:block">Sanitizer & Batch Downloader</p>
       </div>
     </div>
 
     <!-- Header Actions -->
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-1.5 sm:gap-2">
       <!-- Cookie Session Status Button -->
       <button @click="openCookieModal()" 
-              class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors"
-              :class="cookieStatus.has_cookies ? 'bg-emerald-950/40 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/50' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'">
+              class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors"
+              :class="cookieStatus.has_cookies ? 'bg-emerald-950/50 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/50' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'">
         <span class="w-2 h-2 rounded-full" :class="cookieStatus.has_cookies ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'"></span>
         <i class="fa-solid fa-cookie-bite"></i>
-        <span x-text="cookieStatus.has_cookies ? 'Session Active' : 'Session / Cookies'"></span>
+        <span class="hidden sm:inline" x-text="cookieStatus.has_cookies ? 'Session Active' : 'Session'"></span>
       </button>
 
       <!-- Exclusions Button -->
-      <button @click="showExclusionsModal = true" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 transition">
-        <i class="fa-solid fa-filter mr-1.5 text-indigo-400"></i> Exclusions
+      <button @click="showExclusionsModal = true" class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 transition">
+        <i class="fa-solid fa-filter text-indigo-400 sm:mr-1"></i> <span class="hidden sm:inline">Exclusions</span>
       </button>
 
       <!-- History Drawer Button -->
-      <button @click="openHistoryDrawer()" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 transition">
-        <i class="fa-solid fa-clock-rotate-left mr-1.5 text-indigo-400"></i> History
+      <button @click="openHistoryDrawer()" class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 transition">
+        <i class="fa-solid fa-clock-rotate-left text-indigo-400 sm:mr-1"></i> <span class="hidden sm:inline">History</span>
       </button>
     </div>
   </header>
 
   <!-- Main Container -->
-  <main class="flex-1 max-w-7xl w-full mx-auto px-6 py-6 space-y-6">
+  <main class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
 
     <!-- Persistent Completion Banner -->
     <template x-if="completedSummary">
-      <div class="p-4 rounded-xl border flex items-center justify-between shadow-xl transition-all"
-           :class="completedSummary.status === 'Success' ? 'bg-emerald-950/40 border-emerald-800/80 text-emerald-200' : 'bg-amber-950/40 border-amber-800/80 text-amber-200'">
-        <div class="flex items-center gap-3.5">
-          <div class="w-8 h-8 rounded-lg flex items-center justify-center text-lg"
+      <div class="p-3.5 sm:p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xl transition-all"
+           :class="completedSummary.status === 'Success' ? 'bg-emerald-950/50 border-emerald-800/80 text-emerald-200' : 'bg-amber-950/50 border-amber-800/80 text-amber-200'">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center text-lg flex-shrink-0"
                :class="completedSummary.status === 'Success' ? 'bg-emerald-800/50 text-emerald-400' : 'bg-amber-800/50 text-amber-400'">
             <i :class="completedSummary.status === 'Success' ? 'fa-solid fa-circle-check' : 'fa-solid fa-triangle-exclamation'"></i>
           </div>
           <div>
-            <h4 class="text-sm font-semibold" x-text="completedSummary.status === 'Success' ? 'Batch Download Complete' : 'Batch Execution Finished with Warnings'"></h4>
-            <p class="text-xs opacity-80" x-text="`Folder: ${completedSummary.folder} | Downloaded: ${completedSummary.downloaded} of ${completedSummary.total} files (Failed: ${completedSummary.failed})`"></p>
+            <h4 class="text-xs sm:text-sm font-semibold" x-text="completedSummary.status === 'Success' ? 'Batch Download Complete' : 'Execution Finished with Warnings'"></h4>
+            <p class="text-[11px] sm:text-xs opacity-80" x-text="`Folder: ${completedSummary.folder} | Files: ${completedSummary.downloaded}/${completedSummary.total} (Failed: ${completedSummary.failed})`"></p>
           </div>
         </div>
-        <button @click="startNewTask()" class="px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-white rounded-lg text-xs font-medium transition flex items-center gap-1.5 shadow">
+        <button @click="startNewTask()" class="w-full sm:w-auto px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-white rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 shadow">
           <i class="fa-solid fa-plus"></i> Start New Task
         </button>
       </div>
     </template>
 
     <!-- Inspection Bar -->
-    <div class="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl shadow-sm">
-      <div class="flex flex-col md:flex-row gap-3">
+    <div class="bg-slate-900/70 border border-slate-800 p-3 sm:p-4 rounded-2xl shadow-sm">
+      <div class="flex flex-col sm:flex-row gap-2.5 sm:gap-3">
         <div class="relative flex-1">
           <i class="fa-brands fa-google-drive absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"></i>
-          <input type="text" x-model="driveUrl" placeholder="Paste public Google Drive folder link..."
+          <input type="text" x-model="driveUrl" placeholder="Paste Google Drive folder link..."
                  :disabled="isRunning || isScanning"
                  @keydown.enter="scanFolder()"
-                 class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 transition" />
+                 class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 transition" />
         </div>
         <button @click="scanFolder()" :disabled="!driveUrl.trim() || isRunning || isScanning"
-                class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20">
+                class="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20">
           <i class="fa-solid fa-wand-magic-sparkles" :class="isScanning ? 'fa-spin' : ''"></i>
-          <span x-text="isScanning ? 'Inspecting...' : 'Inspect & Generate Plan'"></span>
+          <span x-text="isScanning ? 'Inspecting...' : 'Inspect & Plan'"></span>
         </button>
       </div>
     </div>
 
-    <!-- Live SSE Execution Stream (Moved to Top) -->
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-3">
-      <div class="flex items-center justify-between">
+    <!-- Live SSE Execution Stream (At the Top) -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-2">
           <i class="fa-solid fa-terminal text-xs text-indigo-400"></i>
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">Live SSE Execution Stream</h3>
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">Live Execution Stream</h3>
         </div>
-        <div class="flex items-center gap-3 text-xs text-slate-400">
+        <div class="text-xs text-slate-400">
           <template x-if="isRunning">
             <div class="flex items-center gap-2">
               <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-              <span class="font-mono text-emerald-300" x-text="`Processing: ${progress.active_file || 'Preparing...'} (${progress.current}/${progress.total})`"></span>
+              <span class="font-mono text-emerald-300 truncate max-w-[200px] sm:max-w-sm" x-text="`${progress.active_file || 'Downloading...'} (${progress.current}/${progress.total})`"></span>
             </div>
           </template>
           <template x-if="!isRunning">
@@ -115,16 +115,16 @@
       </div>
 
       <!-- Progress Bar -->
-      <div class="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-slate-800">
-        <div class="bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400 h-2.5 transition-all duration-300"
+      <div class="w-full bg-slate-950 rounded-full h-2 sm:h-2.5 overflow-hidden border border-slate-800">
+        <div class="bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400 h-full transition-all duration-300"
              :style="`width: ${progress.percent}%`"></div>
       </div>
 
-      <!-- Terminal Window -->
-      <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-3 font-mono text-xs text-slate-300 h-44 overflow-y-auto space-y-1"
+      <!-- Terminal Output Window -->
+      <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-3 font-mono text-xs text-slate-300 h-36 sm:h-44 overflow-y-auto space-y-1"
            id="terminalLogs">
         <template x-for="(log, idx) in logs" :key="idx">
-          <div class="leading-relaxed" x-text="log"></div>
+          <div class="leading-relaxed break-all" x-text="log"></div>
         </template>
         <template x-if="logs.length === 0">
           <div class="text-slate-600 italic">Logs and download events will stream here in real time...</div>
@@ -136,40 +136,42 @@
     <template x-if="plan">
       <div class="space-y-4">
         <!-- Plan Controls & Destination Field -->
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
           <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <!-- Destination Folder & Status -->
-            <div class="flex-1 max-w-xl">
+            <!-- Destination Folder -->
+            <div class="flex-1 max-w-xl w-full">
               <label class="block text-xs font-medium text-slate-400 mb-1.5">Destination Directory (under /downloads/)</label>
-              <div class="flex items-center gap-2">
+              <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                 <input type="text" x-model="plan.destination_folder"
-                       class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none" />
-                <span class="text-xs px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 whitespace-nowrap"
-                      :class="plan.destination_exists_on_disk ? 'bg-amber-950/40 border-amber-800 text-amber-300' : 'bg-slate-800 border-slate-700 text-slate-400'">
-                  <i :class="plan.destination_exists_on_disk ? 'fa-solid fa-folder-open' : 'fa-solid fa-folder-plus'"></i>
-                  <span x-text="plan.destination_exists_on_disk ? 'Existing Folder (on disk)' : 'New Folder'"></span>
-                </span>
-                <button @click="reapplyRules()" title="Reapply exclusions and check disk status"
-                        class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-medium transition border border-slate-700">
-                  <i class="fa-solid fa-rotate mr-1"></i> Re-Apply
-                </button>
+                       class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-200 focus:border-indigo-500 focus:outline-none" />
+                <div class="flex items-center gap-2">
+                  <span class="text-[11px] px-2.5 py-2 rounded-lg border flex items-center justify-center gap-1.5 whitespace-nowrap flex-1 sm:flex-initial"
+                        :class="plan.destination_exists_on_disk ? 'bg-amber-950/40 border-amber-800 text-amber-300' : 'bg-slate-800 border-slate-700 text-slate-400'">
+                    <i :class="plan.destination_exists_on_disk ? 'fa-solid fa-folder-open' : 'fa-solid fa-folder-plus'"></i>
+                    <span x-text="plan.destination_exists_on_disk ? 'Exists on disk' : 'New Folder'"></span>
+                  </span>
+                  <button @click="reapplyRules()" title="Reapply exclusions"
+                          class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-medium transition border border-slate-700">
+                    <i class="fa-solid fa-rotate mr-1"></i> Re-Apply
+                  </button>
+                </div>
               </div>
             </div>
 
             <!-- Execution Actions -->
-            <div class="flex items-center gap-3">
-              <button @click="toggleSelectAll()" class="px-3 py-2 text-xs font-medium rounded-xl border border-slate-700 hover:bg-slate-800 text-slate-300 transition">
+            <div class="flex items-center gap-2 pt-2 sm:pt-0 w-full lg:w-auto">
+              <button @click="toggleSelectAll()" class="flex-1 sm:flex-initial px-3 py-2 text-xs font-medium rounded-xl border border-slate-700 hover:bg-slate-800 text-slate-300 transition text-center">
                 <i class="fa-solid fa-check-double mr-1"></i> Toggle All
               </button>
               <template x-if="!isRunning">
                 <button @click="startDownload()" :disabled="selectedCount === 0"
-                        class="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-sm font-semibold transition flex items-center gap-2 shadow-lg shadow-emerald-600/20">
+                        class="flex-1 sm:flex-initial px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20">
                   <i class="fa-solid fa-play"></i>
-                  <span>Execute Download (<span x-text="selectedCount"></span>)</span>
+                  <span>Execute (<span x-text="selectedCount"></span>)</span>
                 </button>
               </template>
               <template x-if="isRunning">
-                <button @click="cancelTask()" class="px-6 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-sm font-semibold transition flex items-center gap-2 shadow-lg shadow-rose-600/20">
+                <button @click="cancelTask()" class="flex-1 sm:flex-initial px-5 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20">
                   <i class="fa-solid fa-stop"></i>
                   <span>Cancel Job</span>
                 </button>
@@ -178,45 +180,46 @@
           </div>
 
           <!-- Filter Category Tabs -->
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-2 pt-2 border-t border-slate-800/80">
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-2 pt-2 border-t border-slate-800/80">
             <button @click="activeTab = 'all'" :class="activeTab === 'all' ? 'bg-indigo-950/60 border-indigo-500/80 text-white' : 'bg-slate-950 border-slate-800/80 text-slate-400 hover:bg-slate-800/40'"
-                    class="p-2.5 rounded-xl border text-left transition flex items-center justify-between">
+                    class="p-2 sm:p-2.5 rounded-xl border text-left transition flex items-center justify-between">
               <div>
-                <span class="block text-xs font-medium">Total Scanned</span>
-                <span class="text-sm font-bold" x-text="plan.items.length"></span>
+                <span class="block text-[11px] sm:text-xs font-medium">Total</span>
+                <span class="text-xs sm:text-sm font-bold" x-text="plan.items.length"></span>
               </div>
-              <i class="fa-solid fa-list text-slate-500"></i>
+              <i class="fa-solid fa-list text-slate-500 text-xs sm:text-sm"></i>
             </button>
             <button @click="activeTab = 'approved'" :class="activeTab === 'approved' ? 'bg-emerald-950/60 border-emerald-500/80 text-white' : 'bg-slate-950 border-slate-800/80 text-slate-400 hover:bg-slate-800/40'"
-                    class="p-2.5 rounded-xl border text-left transition flex items-center justify-between">
+                    class="p-2 sm:p-2.5 rounded-xl border text-left transition flex items-center justify-between">
               <div>
-                <span class="block text-xs font-medium">Approved for Download</span>
-                <span class="text-sm font-bold text-emerald-400" x-text="approvedItems.length"></span>
+                <span class="block text-[11px] sm:text-xs font-medium">Approved</span>
+                <span class="text-xs sm:text-sm font-bold text-emerald-400" x-text="approvedItems.length"></span>
               </div>
-              <i class="fa-solid fa-circle-check text-emerald-500"></i>
+              <i class="fa-solid fa-circle-check text-emerald-500 text-xs sm:text-sm"></i>
             </button>
             <button @click="activeTab = 'on_disk'" :class="activeTab === 'on_disk' ? 'bg-blue-950/60 border-blue-500/80 text-white' : 'bg-slate-950 border-slate-800/80 text-slate-400 hover:bg-slate-800/40'"
-                    class="p-2.5 rounded-xl border text-left transition flex items-center justify-between">
+                    class="p-2 sm:p-2.5 rounded-xl border text-left transition flex items-center justify-between">
               <div>
-                <span class="block text-xs font-medium">Skipped (On Disk)</span>
-                <span class="text-sm font-bold text-blue-400" x-text="onDiskItems.length"></span>
+                <span class="block text-[11px] sm:text-xs font-medium">On Disk</span>
+                <span class="text-xs sm:text-sm font-bold text-blue-400" x-text="onDiskItems.length"></span>
               </div>
-              <i class="fa-solid fa-hard-drive text-blue-500"></i>
+              <i class="fa-solid fa-hard-drive text-blue-500 text-xs sm:text-sm"></i>
             </button>
             <button @click="activeTab = 'bloat'" :class="activeTab === 'bloat' ? 'bg-amber-950/60 border-amber-500/80 text-white' : 'bg-slate-950 border-slate-800/80 text-slate-400 hover:bg-slate-800/40'"
-                    class="p-2.5 rounded-xl border text-left transition flex items-center justify-between">
+                    class="p-2 sm:p-2.5 rounded-xl border text-left transition flex items-center justify-between">
               <div>
-                <span class="block text-xs font-medium">Skipped (Bloatware)</span>
-                <span class="text-sm font-bold text-amber-400" x-text="bloatItems.length"></span>
+                <span class="block text-[11px] sm:text-xs font-medium">Bloat</span>
+                <span class="text-xs sm:text-sm font-bold text-amber-400" x-text="bloatItems.length"></span>
               </div>
-              <i class="fa-solid fa-ban text-amber-500"></i>
+              <i class="fa-solid fa-ban text-amber-500 text-xs sm:text-sm"></i>
             </button>
           </div>
         </div>
 
-        <!-- Filtered Items Table -->
+        <!-- Filtered Items Table & Mobile Cards -->
         <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
-          <div class="max-h-[380px] overflow-y-auto">
+          <!-- Desktop Table (md and up) -->
+          <div class="hidden md:block max-h-[380px] overflow-y-auto">
             <table class="w-full text-left text-xs border-collapse">
               <thead class="sticky top-0 bg-slate-950 border-b border-slate-800 text-slate-400 font-semibold z-10">
                 <tr>
@@ -248,13 +251,37 @@
                     </td>
                   </tr>
                 </template>
-                <template x-if="displayedItems.length === 0">
-                  <tr>
-                    <td colspan="5" class="py-8 text-center text-slate-500">No items match the active category filter.</td>
-                  </tr>
-                </template>
               </tbody>
             </table>
+          </div>
+
+          <!-- Mobile Cards (below md) -->
+          <div class="block md:hidden max-h-[380px] overflow-y-auto divide-y divide-slate-800/60 p-2 space-y-2">
+            <template x-for="(item, idx) in displayedItems" :key="idx">
+              <div class="p-3 bg-slate-950 rounded-xl border border-slate-800/80 text-xs space-y-2">
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" x-model="item.selected" class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer" />
+                    <span class="font-mono text-slate-200 break-all" x-text="item.sanitized_path"></span>
+                  </div>
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide uppercase whitespace-nowrap flex-shrink-0"
+                        :class="{
+                          'bg-emerald-950/80 text-emerald-400 border border-emerald-800/60': item.category === 'approved',
+                          'bg-blue-950/80 text-blue-400 border border-blue-800/60': item.category === 'on_disk',
+                          'bg-amber-950/80 text-amber-400 border border-amber-800/60': item.category === 'bloat'
+                        }"
+                        x-text="item.category === 'approved' ? 'Approved' : (item.category === 'on_disk' ? 'On Disk' : 'Bloat')">
+                  </span>
+                </div>
+                <div class="flex items-center justify-between text-slate-500 text-[11px] pl-6 font-mono">
+                  <span class="truncate max-w-[200px]" x-text="item.original_path"></span>
+                  <span x-text="item.size_str"></span>
+                </div>
+              </div>
+            </template>
+            <template x-if="displayedItems.length === 0">
+              <div class="py-8 text-center text-slate-500 text-xs">No items in this category filter.</div>
+            </template>
           </div>
         </div>
       </div>
@@ -263,8 +290,8 @@
   </main>
 
   <!-- Cookie Session Modal -->
-  <div x-show="showCookieModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+  <div x-show="showCookieModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-4">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
         <div class="flex items-center gap-2">
           <div class="w-7 h-7 rounded-lg bg-emerald-950 border border-emerald-700/60 flex items-center justify-center text-emerald-400 text-xs">
@@ -309,8 +336,8 @@
   </div>
 
   <!-- Exclusions Rules Modal -->
-  <div x-show="showExclusionsModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+  <div x-show="showExclusionsModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-4">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
         <div class="flex items-center gap-2">
           <i class="fa-solid fa-filter text-indigo-400 text-sm"></i>
@@ -332,21 +359,21 @@
     </div>
   </div>
 
-  <!-- Execution Audit Log Drawer -->
+  <!-- Execution Audit Log Drawer (Responsive Sheet) -->
   <div x-show="showHistoryDrawer" x-cloak class="fixed inset-0 z-50 overflow-hidden bg-slate-950/70 backdrop-blur-sm flex justify-end">
-    <div class="w-full max-w-xl bg-slate-900 border-l border-slate-800 h-full p-6 flex flex-col justify-between shadow-2xl">
+    <div class="w-full sm:max-w-xl bg-slate-900 border-l border-slate-800 h-full p-4 sm:p-6 flex flex-col justify-between shadow-2xl">
       <div class="space-y-4 overflow-y-auto pr-1">
         <div class="flex items-center justify-between border-b border-slate-800 pb-3">
           <div class="flex items-center gap-2">
             <i class="fa-solid fa-clock-rotate-left text-indigo-400"></i>
-            <h3 class="text-sm font-bold text-white">Execution Audit Log (SQLite)</h3>
+            <h3 class="text-sm font-bold text-white">Execution Audit Log</h3>
           </div>
           <button @click="showHistoryDrawer = false" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
         </div>
 
         <div class="space-y-3">
           <template x-for="item in historyList" :key="item.id">
-            <div class="p-3 bg-slate-950 border border-slate-800 rounded-xl text-xs space-y-1.5 relative group">
+            <div class="p-3 bg-slate-950 border border-slate-800 rounded-xl text-xs space-y-2">
               <div class="flex items-center justify-between">
                 <span class="font-semibold text-slate-200" x-text="item.folder_name"></span>
                 <span class="text-[10px] px-2 py-0.5 rounded font-mono uppercase"
@@ -357,10 +384,25 @@
                 <span x-text="item.timestamp"></span>
                 <span x-text="`Files: ${item.downloaded_files}/${item.total_files} (Failed: ${item.failed_files})`"></span>
               </div>
-              <button @click="deleteHistoryItem(item.id)" title="Delete record"
-                      class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 transition p-1">
-                <i class="fa-solid fa-trash"></i>
-              </button>
+              <!-- URL and Action Buttons Row -->
+              <div class="pt-1.5 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                <span class="font-mono text-slate-500 text-[10px] truncate max-w-[180px] sm:max-w-[240px]" x-text="item.url || 'No URL stored'"></span>
+                <div class="flex items-center gap-1.5">
+                  <template x-if="item.url">
+                    <div class="flex items-center gap-1.5">
+                      <button @click="copyHistoryUrl(item.url)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] transition flex items-center gap-1">
+                        <i class="fa-regular fa-copy"></i> Copy
+                      </button>
+                      <button @click="useHistoryUrl(item.url)" class="px-2 py-1 rounded bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 text-[11px] transition flex items-center gap-1">
+                        <i class="fa-solid fa-arrow-up-right-from-square"></i> Use Link
+                      </button>
+                    </div>
+                  </template>
+                  <button @click="deleteHistoryItem(item.id)" class="p-1 text-slate-500 hover:text-rose-400 transition ml-1">
+                    <i class="fa-solid fa-trash"></i>
+                  </button>
+                </div>
+              </div>
             </div>
           </template>
           <template x-if="historyList.length === 0">
@@ -509,6 +551,7 @@
           this.completedSummary = null;
           const payload = {
             destination_folder: this.plan.destination_folder,
+            url: this.driveUrl.trim(),
             items: this.plan.items
           };
           try {
@@ -622,6 +665,17 @@
           } catch (e) {
             console.error(e);
           }
+        },
+
+        copyHistoryUrl(url) {
+          navigator.clipboard.writeText(url);
+          alert('Copied URL to clipboard');
+        },
+
+        useHistoryUrl(url) {
+          this.driveUrl = url;
+          this.showHistoryDrawer = false;
+          this.scanFolder();
         }
       }
     }

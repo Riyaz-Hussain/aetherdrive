@@ -11,7 +11,6 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "/appdata"))
 DOWNLOAD_DIR = Path(os.environ.get("DOWNLOAD_DIR", "/downloads"))
 COOKIE_FILE = DATA_DIR / "cookies.txt"
 
-# Default noise and bloatware patterns
 DEFAULT_EXCLUSIONS = [
     "*trailer*", "*sample*", "*preview*", "*bonus*", "*promo*",
     "*reels*", "*short*", "*teaser*", "*advert*", "*watermark*",
@@ -43,10 +42,7 @@ def sanitize_name(name: str) -> str:
 
 def sanitize_path_tree(path_str: str) -> str:
     parts = Path(path_str).parts
-    clean_parts = []
-    for part in parts:
-        clean = sanitize_name(part)
-        clean_parts.append(clean if clean else part)
+    clean_parts = [sanitize_name(part) or part for part in parts]
     return str(Path(*clean_parts))
 
 def is_bloatware(path_str: str, custom_exclusions: Optional[List[str]] = None) -> bool:
@@ -62,14 +58,39 @@ def is_bloatware(path_str: str, custom_exclusions: Optional[List[str]] = None) -
     return False
 
 def check_file_on_disk(destination_folder: str, sanitized_subpath: str, size: int) -> bool:
-    parts = Path(sanitized_subpath).parts
-    rel_tail = Path(*parts[1:]) if len(parts) > 1 else Path(parts[0])
-    target_path = DOWNLOAD_DIR / destination_folder / rel_tail
+    target_path = DOWNLOAD_DIR / destination_folder / sanitized_subpath
     if target_path.exists() and target_path.is_file():
         disk_size = target_path.stat().st_size
         if disk_size == size or (size > 0 and abs(disk_size - size) < 1024):
             return True
     return False
+
+def extract_remote_drive_title(url: str, cookie_path: Optional[str] = None) -> Optional[str]:
+    try:
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        })
+        if cookie_path and os.path.exists(cookie_path):
+            with open(cookie_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    if line.startswith('#') or not line.strip():
+                        continue
+                    parts = line.strip().split('\t')
+                    if len(parts) >= 7:
+                        session.cookies.set(parts[5], parts[6], domain=parts[0], path=parts[2])
+
+        resp = session.get(url, timeout=10)
+        if resp.status_code == 200:
+            match = re.search(r'<title>(.*?)</title>', resp.text, re.IGNORECASE | re.DOTALL)
+            if match:
+                raw_title = match.group(1).strip()
+                cleaned = re.sub(r'(\s*-\s*Google Drive|\s*Drive)$', '', raw_title, flags=re.IGNORECASE).strip()
+                if cleaned and "Google Drive" not in cleaned:
+                    return sanitize_name(cleaned)
+    except Exception:
+        pass
+    return None
 
 def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Dict[str, Any]:
     cookie_path = get_cookie_file_path()
@@ -86,9 +107,11 @@ def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Di
     if not remote_files:
         raise ValueError("No files discovered in the provided Google Drive link.")
 
+    web_title = extract_remote_drive_title(url, cookie_path)
     first_path = remote_files[0].path if hasattr(remote_files[0], 'path') else remote_files[0].get('path', '')
     raw_root_title = Path(first_path).parts[0] if first_path else "AetherDrive_Download"
-    clean_destination_title = sanitize_name(re.sub(r'(\s*-\s*Google Drive|\s*Drive)$', '', raw_root_title, flags=re.IGNORECASE))
+
+    clean_destination_title = web_title if web_title else sanitize_name(re.sub(r'(\s*-\s*Google Drive|\s*Drive)$', '', raw_root_title, flags=re.IGNORECASE))
 
     items = []
     for f in remote_files:
