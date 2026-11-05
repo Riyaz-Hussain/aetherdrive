@@ -4,6 +4,7 @@ import sqlite3
 import datetime
 import asyncio
 import threading
+import errno
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -75,6 +76,8 @@ class JobState:
             "active_file": ""
         }
         self.completed_summary: Optional[Dict[str, Any]] = None
+        self.cleanup_paths: Dict[str, tuple[int, int, int, int]] = {}
+        self.cleanup_directories: Dict[str, tuple[int, int]] = {}
 
 state = JobState()
 gdown_progress_lock = threading.Lock()
@@ -311,10 +314,55 @@ async def sse_stream():
 
     return EventSourceResponse(event_generator())
 
-async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, Any]], original_url: str):
+def download_relative_path(path: Path) -> Optional[str]:
+    root = DOWNLOAD_DIR.resolve()
+    try:
+        return str(path.resolve().relative_to(root))
+    except ValueError:
+        return None
+
+def ensure_download_directories(path: Path) -> Dict[str, tuple[int, int]]:
+    root = DOWNLOAD_DIR.resolve()
+    try:
+        relative_path = path.resolve().relative_to(root)
+    except ValueError:
+        path.mkdir(parents=True, exist_ok=True)
+        return {}
+
+    directories = {}
+    current = root
+    for part in relative_path.parts:
+        current = current / part
+        try:
+            current.mkdir()
+        except FileExistsError:
+            if not current.is_dir():
+                raise
+        else:
+            stat = current.stat()
+            directories[str(current.relative_to(root))] = (stat.st_dev, stat.st_ino)
+    return directories
+
+def track_cleanup_file(path: Path):
+    relative = download_relative_path(path)
+    if relative and path.is_file() and not path.is_symlink():
+        stat = path.stat()
+        state.cleanup_paths[relative] = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+async def run_download_worker(
+    dest_folder: str,
+    approved_items: List[Dict[str, Any]],
+    original_url: str,
+    created_source_file: Optional[Path] = None,
+    created_source_directories: Optional[Dict[str, tuple[int, int]]] = None
+):
     state.is_running = True
     state.cancel_requested = False
     state.completed_summary = None
+    state.cleanup_paths = {}
+    state.cleanup_directories = dict(created_source_directories or {})
+    if created_source_file:
+        track_cleanup_file(created_source_file)
 
     downloaded = 0
     skipped = 0
@@ -343,7 +391,9 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
         else:
             target_path = DOWNLOAD_DIR / dest_root / rel_sub
 
-        target_path.parent.mkdir(parents=True, exist_ok=True)
+        state.cleanup_directories.update(ensure_download_directories(target_path.parent))
+        existing_entries = set(target_path.parent.iterdir())
+        target_preexisting = target_path in existing_entries
 
         state.progress["current"] = idx + 1
         state.progress["percent"] = int((idx / total) * 100)
@@ -367,6 +417,8 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
 
             if output and Path(output).exists():
                 repaired = repair_extension_magic_bytes(Path(output))
+                if not target_preexisting and repaired not in existing_entries:
+                    track_cleanup_file(repaired)
                 downloaded += 1
                 state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Completed: {repaired.name}")
             else:
@@ -376,6 +428,14 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
             failed += 1
             state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Error: {target_path.name} | {str(err)}")
         finally:
+            for entry in target_path.parent.iterdir():
+                if (
+                    entry not in existing_entries
+                    and entry.is_file()
+                    and entry.name.startswith(target_path.name)
+                    and entry.name.endswith(".part")
+                ):
+                    track_cleanup_file(entry)
             state.progress["percent"] = int(((idx + 1) / total) * 100)
             state.progress["indeterminate"] = False
 
@@ -385,7 +445,9 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
         "total": total,
         "downloaded": downloaded,
         "failed": failed,
-        "status": "Canceled" if state.cancel_requested else ("Success" if failed == 0 else "Completed with errors")
+        "status": "Canceled" if state.cancel_requested else ("Success" if failed == 0 else "Completed with errors"),
+        "cleanup_available": state.cancel_requested and bool(state.cleanup_paths or state.cleanup_directories),
+        "cleanup_completed": False
     }
 
     with sqlite3.connect(DB_PATH) as conn:
@@ -424,8 +486,9 @@ async def start_download(req: DownloadRequest):
 
     dest_root = Path(req.destination_folder.strip()) if req.destination_folder.strip() else Path("Downloads")
     source_url_path = DOWNLOAD_DIR / dest_root / "source_url.txt"
+    source_file_is_new = not source_url_path.exists()
     try:
-        source_url_path.parent.mkdir(parents=True, exist_ok=True)
+        source_directories_is_new = ensure_download_directories(source_url_path.parent)
         existing_content = source_url_path.read_text(encoding="utf-8") if source_url_path.exists() else ""
         existing_lines = existing_content.splitlines()
         matching_line = next(
@@ -495,7 +558,13 @@ async def start_download(req: DownloadRequest):
         ) from err
 
     state.completed_summary = None
-    asyncio.create_task(run_download_worker(req.destination_folder, selected, url_to_save))
+    asyncio.create_task(run_download_worker(
+        req.destination_folder,
+        selected,
+        url_to_save,
+        source_url_path if source_file_is_new else None,
+        source_directories_is_new
+    ))
     return {"status": "started", "queued": len(selected)}
 
 @app.post("/api/cancel")
@@ -504,6 +573,76 @@ def cancel_task():
         return {"status": "idle"}
     state.cancel_requested = True
     return {"status": "canceling"}
+
+@app.post("/api/cleanup-canceled")
+def cleanup_canceled_downloads():
+    if state.is_running:
+        raise HTTPException(status_code=400, detail="Cannot clean up while a download task is active.")
+    if not state.completed_summary or state.completed_summary.get("status") != "Canceled":
+        raise HTTPException(status_code=400, detail="There is no canceled download task to clean up.")
+    if not state.completed_summary.get("cleanup_available"):
+        raise HTTPException(status_code=400, detail="There are no newly created files or folders to remove.")
+
+    root = DOWNLOAD_DIR.resolve()
+    removed_files = 0
+    removed_directories = 0
+    for relative_path, expected_stat in sorted(state.cleanup_paths.items()):
+        candidate = DOWNLOAD_DIR / relative_path
+        try:
+            candidate.resolve().relative_to(root)
+        except ValueError as err:
+            raise HTTPException(status_code=400, detail="Cleanup path is outside the downloads directory.") from err
+        if candidate.is_symlink():
+            continue
+        if candidate.is_file():
+            try:
+                stat = candidate.stat()
+                if (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns) != expected_stat:
+                    continue
+                candidate.unlink()
+                removed_files += 1
+            except FileNotFoundError:
+                continue
+            except OSError as err:
+                raise HTTPException(status_code=500, detail=f"Failed to remove file {relative_path}: {err}") from err
+
+    for relative_path, expected_stat in sorted(
+        state.cleanup_directories.items(),
+        key=lambda item: len(Path(item[0]).parts),
+        reverse=True
+    ):
+        candidate = DOWNLOAD_DIR / relative_path
+        try:
+            candidate.resolve().relative_to(root)
+        except ValueError as err:
+            raise HTTPException(status_code=400, detail="Cleanup folder is outside the downloads directory.") from err
+        if candidate.is_symlink() or not candidate.is_dir():
+            continue
+        try:
+            stat = candidate.stat()
+            if (stat.st_dev, stat.st_ino) != expected_stat:
+                continue
+            candidate.rmdir()
+            removed_directories += 1
+        except FileNotFoundError:
+            continue
+        except OSError as err:
+            if err.errno != errno.ENOTEMPTY:
+                raise HTTPException(status_code=500, detail=f"Failed to remove folder {relative_path}: {err}") from err
+
+    state.cleanup_paths.clear()
+    state.cleanup_directories.clear()
+    state.completed_summary["cleanup_available"] = False
+    state.completed_summary["cleanup_completed"] = True
+    state.logs.append(
+        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🧹 Removed {removed_files} created files and {removed_directories} empty folders."
+    )
+    return {
+        "status": "success",
+        "removed_files": removed_files,
+        "removed_directories": removed_directories,
+        "completed_summary": state.completed_summary
+    }
 
 @app.post("/api/reset")
 def reset_workspace():

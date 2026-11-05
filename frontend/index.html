@@ -75,9 +75,17 @@
             <p class="text-[11px] sm:text-xs opacity-80" x-text="`Folder: ${completedSummary.folder} | Files: ${completedSummary.downloaded}/${completedSummary.total} (Failed: ${completedSummary.failed})`"></p>
           </div>
         </div>
-        <button @click="startNewTask()" class="w-full sm:w-auto px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-white rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 shadow">
-          <i class="fa-solid fa-plus"></i> Start New Task
-        </button>
+        <div class="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <button x-show="completedSummary.status === 'Canceled' && completedSummary.cleanup_available"
+                  @click="cleanupCanceledDownloads()" :disabled="isCleaningCanceledFiles"
+                  class="w-full sm:w-auto px-3 py-1.5 bg-rose-950/60 border border-rose-800 hover:bg-rose-900/70 disabled:opacity-50 text-rose-200 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 shadow">
+            <i class="fa-solid" :class="isCleaningCanceledFiles ? 'fa-spinner fa-spin' : 'fa-trash-can'"></i>
+            <span x-text="isCleaningCanceledFiles ? 'Removing...' : 'Remove Created Files'"></span>
+          </button>
+          <button @click="startNewTask()" class="w-full sm:w-auto px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-white rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 shadow">
+            <i class="fa-solid fa-plus"></i> Start New Task
+          </button>
+        </div>
       </div>
     </template>
 
@@ -468,6 +476,7 @@
         logs: [],
         progress: { current: 0, total: 0, percent: 0, speed: '', active_file: '', downloaded_bytes: 0, total_bytes: null, indeterminate: false },
         completedSummary: null,
+        isCleaningCanceledFiles: false,
         showCookieModal: false,
         cookieInput: '',
         cookieStatus: { has_cookies: false, file_size: 0, last_modified: '' },
@@ -619,6 +628,23 @@
             await fetch('/api/cancel', { method: 'POST' });
           } catch (e) {
             console.error(e);
+          }
+        },
+
+        async cleanupCanceledDownloads() {
+          if (!this.completedSummary?.cleanup_available || this.isCleaningCanceledFiles) return;
+          if (!confirm('Remove files created by this canceled download and any now-empty folders? Existing files will be kept.')) return;
+          this.isCleaningCanceledFiles = true;
+          try {
+            const res = await fetch('/api/cleanup-canceled', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Failed to remove created files');
+            this.completedSummary = data.completed_summary;
+            alert(`Removed ${data.removed_files} file(s) and ${data.removed_directories} empty folder(s).`);
+          } catch (e) {
+            alert(`Cleanup failed: ${e.message}`);
+          } finally {
+            this.isCleaningCanceledFiles = false;
           }
         },
 

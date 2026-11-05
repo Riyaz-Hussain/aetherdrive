@@ -38,6 +38,7 @@ The application is intended for folders and files you are authorized to access a
 - **Choose what to download.** Filter the plan by category, select individual items or all visible items, and execute the selected batch.
 - **Rename the destination.** Set the folder name under the downloads directory before executing; reapply the plan to recalculate disk and exclusion categories.
 - **Monitor a running batch.** View the current file, progress, and streamed log messages in the web interface. Cancel requests take effect between files.
+- **Clean up canceled batches.** After cancellation, optionally remove files created by that run and directories that are empty afterward. Pre-existing files are preserved.
 - **Reuse authorized Google Drive access.** Optionally provide a Netscape-format `cookies.txt` through the UI. The app attempts the scan with those cookies and falls back to anonymous access if that attempt does not return files.
 - **Keep a run history.** Review completed batch results, search history by folder, URL, status, or date, copy or reuse a link, and remove individual or all history entries.
 - **Keep source details with the files.** Each accepted download task records the Google Drive folder name, local date and time, and source URL in `source_url.txt` in the destination folder. Repeated links are not duplicated.
@@ -118,7 +119,7 @@ The repository's GitHub Actions workflow publishes container images to GHCR for 
 2. **Review the plan:** The counters and tabs show all scanned items, approved items, items considered on disk, and items matched by exclusion rules. Review paths, sizes, and statuses before proceeding.
 3. **Choose a destination:** Edit the destination directory name. Downloads are placed underneath the configured downloads directory. Use **Re-Apply** after changing the destination or exclusion rules to recalculate the plan against disk.
 4. **Select files:** Check individual items, or use the select-all checkbox to select all items in the current category view. Items classified as on disk or bloat are not selected by default, but can be selected in the plan.
-5. **Execute or cancel:** Choose **Execute** to start a batch. The live stream shows the current file and log events. **Cancel** asks the worker to stop before the next file; an in-progress file transfer may finish first.
+5. **Execute or cancel:** Choose **Execute** to start a batch. The live stream shows the current file and log events. **Cancel** asks the worker to stop before the next file; an in-progress file transfer may finish first. After cancellation, choose **Remove Created Files** to remove files created by that run and any folders that are empty afterward. Existing files are kept.
 6. **Review history:** Open **History** to search and review completed runs. Copy a stored link, use it to start a new inspection, or delete history records.
 7. **Start another task:** Use **Start New Task** in the completion banner to reset the current in-memory workspace.
 
@@ -186,6 +187,7 @@ FastAPI's interactive API documentation is available at `/docs` while the servic
 | `POST` | `/api/reapply` | Re-evaluate the current in-memory scan with `{"destination_folder":"..."}`. |
 | `POST` | `/api/download` | Start a batch from `destination_folder`, optional `url`, and an `items` array; items with `selected: true` are queued. |
 | `POST` | `/api/cancel` | Request cancellation of the active batch. |
+| `POST` | `/api/cleanup-canceled` | Remove files and folders tracked as newly created by the canceled batch. |
 | `POST` | `/api/reset` | Clear the in-memory workspace when no download is running. |
 | `GET` | `/api/events` | Receive `log` and `status` events over SSE. |
 | `GET` | `/api/history` | Return all audit records, newest first. |
