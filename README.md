@@ -1,116 +1,76 @@
 <div align="center">
 
-# ⚡ AetherDrive
+# AetherDrive
 
-### Cloud Downloader, Folder Tree Crawler & Path-Sanitizing Engine
+### Inspect, organize, and download Google Drive folders
 
-[![Docker Image](https://img.shields.io/badge/Docker-ghcr.io-2496ED?logo=docker&logoColor=white)](https://ghcr.io/riyaz-hussain/aetherdrive)
-[![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Alpine.js](https://img.shields.io/badge/Alpine.js-8BC0D0?logo=alpinedotjs&logoColor=white)](https://alpinejs.dev/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![Docker Image](https://img.shields.io/badge/Docker-GHCR-2496ED?logo=docker&logoColor=white)](https://github.com/riyaz-hussain/aetherdrive/pkgs/container/aetherdrive)
+[![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
 
-**AetherDrive** is a cloud downloader, folder tree crawler, and path-sanitizing engine built with **FastAPI**, **Alpine.js**, and **Tailwind CSS**. It is designed to inspect public Google Drive folders, strip aggressive promo watermarks, detect spam/bloatware, avoid downloading duplicate files already on disk, and manage transfers through Docker.
+AetherDrive is a self-hosted web application for inspecting accessible Google Drive folders and selectively downloading their contents. It cleans noisy file paths, identifies files that appear to be present in the destination already, lets you filter promotional or unwanted items, and records completed download runs for later reference.
 
----
+The application is intended for folders and files you are authorized to access and download. Google Drive availability, rate limits, and access controls still apply.
 
-## Table of Contents
+## Contents
 
-- [Key Features & Capabilities](#key-features--capabilities)
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [Usage Guide](#usage-guide)
-- [Engine Mechanics: Sanitization & Heuristics](#engine-mechanics-sanitization--heuristics)
-- [Execution Audit Log & Data Retention](#execution-audit-log--data-retention)
-- [API Reference](#api-reference)
-- [Configuration & Environment](#configuration--environment)
-- [Troubleshooting & FAQ](#troubleshooting--faq)
-- [Tech Stack](#tech-stack)
-- [Third-Party Credits & Attributions](#third-party-credits--attributions)
-- [License](#license)
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Quick start with Docker Compose](#quick-start-with-docker-compose)
+- [Using AetherDrive](#using-aetherdrive)
+- [Files and persistent data](#files-and-persistent-data)
+- [Configuration](#configuration)
+- [API reference](#api-reference)
+- [Local development](#local-development)
+- [Security and privacy](#security-and-privacy)
+- [Troubleshooting](#troubleshooting)
+- [Project structure](#project-structure)
+- [License and acknowledgements](#license-and-acknowledgements)
 
----
+## Features
 
-## Key Features & Capabilities
+- **Inspect before downloading.** Scan a Google Drive folder and review the discovered files before starting a transfer.
+- **Clean up folder and file names.** Remove common URL/domain text, `@handles`, copy labels, bracketed annotations, and repeated adjacent path components from local paths.
+- **Filter unwanted content.** Use editable, persistent wildcard rules to classify promotional or otherwise unwanted files.
+- **Check the destination for existing files.** Compare scanned items with files under the selected destination and classify likely matches as already on disk.
+- **Choose what to download.** Filter the plan by category, select individual items or all visible items, and execute the selected batch.
+- **Rename the destination.** Set the folder name under the downloads directory before executing; reapply the plan to recalculate disk and exclusion categories.
+- **Monitor a running batch.** View the current file, progress, and streamed log messages in the web interface. Cancel requests take effect between files.
+- **Reuse authorized Google Drive access.** Optionally provide a Netscape-format `cookies.txt` through the UI. The app attempts the scan with those cookies and falls back to anonymous access if that attempt does not return files.
+- **Keep a run history.** Review completed batch results, search history by folder, URL, status, or date, copy or reuse a link, and remove individual or all history entries.
+- **Keep the source link with the files.** Each accepted download task records its source URL in `source_url.txt` in the destination folder. Repeated links are not duplicated.
+- **Use the responsive web UI.** On smaller screens the file plan switches from a table to cards.
+- **Repair some file extensions.** After a successful download, inspect known file signatures and correct a mismatched or missing extension when the target extension is available.
 
-### 1. Smart Folder Tree Scraping & Heuristics
+## How it works
 
-- **Dual-Engine Folder Scraper:** Crawls embedded Google Drive views and metadata hierarchies without requiring official Google Cloud API keys.
-- **Aggressive Path & Watermark Sanitization:** Strips domain URLs (`.com`, `.net`, `.app`, `.vercel.app`), social media handles (`@username`), promotional copy artifacts (`Copy of...`, `Copy (1) of...`), and channel watermarks while preserving valid directory structures.
-- **Bloatware & Spam Filtering:** Built-in wildcard filters automatically isolate promo files, giveaways, and keygens into a separate tab without downloading them.
-- **On-Disk Deduplication:** Inspects `/downloads/` against clean paths and file sizes before initiating transfers to skip files that already exist locally.
-- **Binary File Extension Repair:** Inspects magic byte signatures (`ftyp`, `RIFF`, `PK\x03\x04`, `Rar!`, `ID3`, etc.) post-download to repair missing or broken extensions.
+1. The browser sends the supplied folder URL to the FastAPI service.
+2. The backend uses `gdown` to inspect the folder, optionally retrying without cookies if the cookie-based scan returns no files. No Google Cloud API key is configured by the app. It also requests the folder page to try to obtain a display title.
+3. Each discovered path is sanitized and classified as **Approved**, **On Disk**, or **Bloat** using the saved wildcard rules and a local disk check.
+4. The user reviews the plan, edits the destination if needed, selects files, and starts a batch.
+5. The backend downloads selected files sequentially into `DOWNLOAD_DIR/<destination-folder>/`, streams events to the browser using Server-Sent Events (SSE), and attempts supported extension repairs.
+6. When the worker finishes, the run is recorded in SQLite and appears in History.
 
-### 2. Interactive Planning & Execution Workspace
+The plan, active worker state, progress, and live logs are held in server memory. They are not restored after a server/container restart. The history database, exclusion rules, cookie file, and downloaded files are separate persistent data.
 
-- **4-Way Filter Dashboard:** Filter scanned items across **Total Scanned**, **Approved for Download**, **Skipped Normal Files (On Disk)**, and **Skipped Bloat Files**.
-- **Editable Destination Folder:** Automatically infers the folder title, strips redundant suffixes (`Drive`, `- Google Drive`), and allows real-time destination renaming before download.
-- **Disk Existence Indicator:** Live status badge informs whether the destination is an **Existing Folder (on disk)** or a **New Folder (will be created)**.
-- **Selective Test Downloads:** Checkbox multi-select, a master select-all toggle, and single-file download triggers let you test downloads on specific files before committing to a full folder batch.
-- **Instant Re-Apply Rules Engine:** Caches the remote scan in memory so you can tweak exclusions, change the destination name, or re-check disk status in under 100ms without re-crawling Google Drive.
+## Quick start with Docker Compose
 
-### 3. Connection Resilience & Audit History
+### Requirements
 
-- **Sleep & Disconnect Resilience:** Active background downloads and console logs survive browser refreshes, connection drops, and laptop sleep cycles via server-side session persistence.
-- **Master Plan Preservation:** Retains the full inventory of scanned items—including all skipped bloatware and on-disk files—in server memory across reconnects and reloads.
-- **Persistent Session Resume Banner:** Displays a completion summary banner when returning to finished jobs, with a single manual **Start New Task** trigger to clear the workspace.
-- **Execution Audit Log:** SQLite-backed audit drawer storing dates, folder names, Drive URLs, status outcomes, and file transfer metrics indefinitely until manually purged.
-- **Live SSE Terminal:** Streams real-time transfer progress, speeds, file counts, and console events directly to the browser UI.
+- Docker Engine with the Compose plugin, or a compatible Docker host such as Portainer.
+- A host with network access to Google Drive and the GitHub Container Registry.
+- Writable host directories for downloads and AetherDrive application data.
 
----
+Create a working directory and persistent folders:
 
-## Architecture
-
-```text
-aetherdrive/
-├── backend/
-│   ├── app.py              # FastAPI server, SSE streaming, SQLite audit store, session cache
-│   └── core.py             # Drive scraper, regex sanitizers, magic bytes repair, heuristics
-├── frontend/
-│   └── index.html          # Single-page interface built with Alpine.js & Tailwind CSS
-├── Dockerfile              # Multi-stage container definition (port 8070)
-├── docker-compose.yml      # Compose spec with /downloads and /appdata mounts
-└── README.md
+```bash
+mkdir -p aetherdrive/downloads aetherdrive/appdata
+cd aetherdrive
 ```
 
-### Data Flow Lifecycle
-
-```text
-[Google Drive URL]
-        │
-        ▼
-[Folder Scrape] ──► [Inspect Folder Metadata & Structure]
-        │
-        ▼
-[Engine Sanitization] ──► Strip Domains, Handles, Watermarks & Bloat Patterns
-        │
-        ▼
-[Local Disk Comparison] ──► Match against existing files in /downloads
-        │
-        ▼
-[Planning Workspace] ──► 4-Way Plan View (Approved / On Disk / Bloat / Total)
-        │
-        ▼ (User Executes Download)
-[Background Download Worker]
-        │
-        ├──► Real-Time SSE Logs & Counters ──► [Browser UI]
-        │
-        ▼
-[Post-Download Magic Byte Repair] ──► Inspect Signatures & Fix Extensions
-        │
-        ▼
-[SQLite Audit Log] ──► Record Execution History (/appdata/aether_history.db)
-```
-
----
-
-## Quick Start
-
-### Run with Docker Compose
-
-Save the following configuration as `docker-compose.yml`:
+Create `docker-compose.yml`:
 
 ```yaml
 services:
@@ -120,149 +80,201 @@ services:
     ports:
       - "8070:8070"
     environment:
-      - DATA_DIR=/appdata
-      - DOWNLOAD_DIR=/downloads
+      DATA_DIR: /appdata
+      DOWNLOAD_DIR: /downloads
     volumes:
-      # Replace the left-hand paths with folders on your host
-      - /volume/DownloadsFolder:/downloads
-      - /volume/docker/appdata/aetherdrive:/appdata
+      - ./downloads:/downloads
+      - ./appdata:/appdata
     restart: unless-stopped
 ```
 
-Start the service:
+Start the service and view its logs:
 
 ```bash
 docker compose up -d
+docker compose logs -f aetherdrive
 ```
 
-Access the web interface at `http://<your-host-ip>:8070`.
+Open `http://<docker-host-address>:8070` in a browser. The service listens on port `8070`.
 
----
+The example uses paths relative to the Compose file. For a NAS or another host, replace `./downloads` and `./appdata` with the actual host paths and ensure the container can write to both.
 
-## Usage Guide
+### Update the image
 
-1. **Scan a Folder:** Paste any public Google Drive folder link and click **Inspect & Generate Plan**.
-2. **Review Plan:** Inspect the 4 tab categories to verify which files are approved, skipped on disk, or flagged as bloatware.
-3. **Customize Destination:** Edit the **Destination Folder** field if you want a custom subfolder name under `/downloads/`.
-4. **Adjust Exclusions:** Click **Exclusions** in the top navigation to add persistent patterns (e.g., `*trailer*`, `*promo*`) that persist in SQLite.
-5. **Re-Apply Rules:** Click **Re-Apply Rules** to instantly recalculate the plan against local disk contents without re-scraping Google Drive.
-6. **Download:** Click **Execute Download** for all approved files, or select individual checkboxes to run a partial test download.
-7. **Start Fresh:** When a task completes, review the summary and click **Start New Task** to clear the workspace for your next link.
+To pull the latest published image and recreate the container:
 
----
+```bash
+docker compose pull
+docker compose up -d
+```
 
-## Engine Mechanics: Sanitization & Heuristics
+The repository's GitHub Actions workflow publishes container images to GHCR for pushes to `main`, version tags, and manual workflow runs. The workflow builds for `linux/amd64` and `linux/arm64`.
 
-### Path Cleaning Rules
+## Using AetherDrive
 
-The sanitizer transforms messy directory structures into readable local folders:
+1. **Inspect a folder:** Paste a Google Drive folder link into the URL field and choose **Inspect & Plan**. The folder must be accessible to the app, either anonymously or with a valid cookie session.
+2. **Review the plan:** The counters and tabs show all scanned items, approved items, items considered on disk, and items matched by exclusion rules. Review paths, sizes, and statuses before proceeding.
+3. **Choose a destination:** Edit the destination directory name. Downloads are placed underneath the configured downloads directory. Use **Re-Apply** after changing the destination or exclusion rules to recalculate the plan against disk.
+4. **Select files:** Check individual items, or use the select-all checkbox to select all items in the current category view. Items classified as on disk or bloat are not selected by default, but can be selected in the plan.
+5. **Execute or cancel:** Choose **Execute** to start a batch. The live stream shows the current file and log events. **Cancel** asks the worker to stop before the next file; an in-progress file transfer may finish first.
+6. **Review history:** Open **History** to search and review completed runs. Copy a stored link, use it to start a new inspection, or delete history records.
+7. **Start another task:** Use **Start New Task** in the completion banner to reset the current in-memory workspace.
 
-**Original:**
+### Exclusions
+
+The Exclusions dialog accepts one wildcard pattern per line. Matching is case-insensitive and uses filename/path wildcard matching. Saving the rules replaces the active rule list, which is stored in the application database. The built-in defaults used when the rule table is first initialized include:
 
 ```text
-[Course Masterclass] @BestCourses_Official - https___downloadcourse.vercel.app/01 - Introduction.mp4
+*trailer*    *sample*      *preview*    *bonus*
+*promo*      *reels*       *short*      *teaser*
+*advert*     *watermark*   *.nfo        *.txt
+*.url        *.lnk          *.exe
 ```
 
-**Cleaned:**
+Rules classify items as **Bloat**; they do not delete files. You can edit or remove patterns in the Exclusions dialog.
+
+### Path cleanup and disk matching
+
+The path cleaner removes common URL/domain strings, `@handles`, `Copy of` labels, and text inside square or round brackets. It also normalizes repeated punctuation/spacing and collapses immediately repeated directory names.
+
+The on-disk check looks for the sanitized relative path inside the selected destination. A file is treated as present when its size matches the scanned size or differs by less than 1 KiB. For a Drive item reported as zero bytes, an existing local file is considered present if it has a non-zero size. This is a practical heuristic, not a content hash; files with matching paths and similar sizes are not byte-for-byte verified.
+
+After a successful download, extension repair recognizes PNG, JPEG, GIF, PDF, ZIP, RAR, 7z, MP4, MKV, and AVI signatures. Files shorter than 16 bytes are not inspected, and only a recognized signature can trigger a rename.
+
+## Files and persistent data
+
+| Container path | Contents | Persistence |
+| --- | --- | --- |
+| `/downloads` | Downloaded folder trees and each task's `source_url.txt` | Persist with a host mount or named volume |
+| `/appdata/aether_history.db` | Execution history and exclusion rules | Persist with a host mount or named volume |
+| `/appdata/cookies.txt` | Optional Google Drive cookie session | Persist with a host mount or named volume |
+
+History is retained indefinitely unless entries are deleted through the UI or API. A history record is written when a download worker completes; a scan by itself does not create a history entry. The UI displays timestamps in the browser's local timezone.
+Run outcomes are recorded as `Success`, `Completed with errors`, or `Canceled`.
+
+Back up both persistent locations if you want to preserve downloads and app data. Stop the container before making a raw SQLite database copy.
+
+### Missing history after changing or updating deployments
+
+The current application reads its database from `DATA_DIR/aether_history.db`, normally `/appdata/aether_history.db`. If the host-side `/appdata` mapping changes or points at a new empty directory, the app creates a new database and History will appear empty. The app does not search for or automatically migrate databases from older paths or schemas.
+
+Do not delete the previous Docker volume or data directory if entries appear to be missing. Stop the service, back up the old data, and verify that the currently mounted host directory contains the database before attempting a migration. Different releases may have used different database filenames, directories, or table schemas.
+
+## Configuration
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DOWNLOAD_DIR` | `/downloads` | Container directory used for destination folders and downloaded files. Mount persistent host storage here. |
+| `DATA_DIR` | `/appdata` | Container directory used for the SQLite database and `cookies.txt`. Mount persistent host storage here. |
+
+The application listens on port `8070`; the current container command uses that port. Map the host port to container port `8070` in Compose. There is no separate runtime port setting in the current server command.
+
+## API reference
+
+FastAPI's interactive API documentation is available at `/docs` while the service is running.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/cookies/status` | Return whether a cookie file exists, its size, and modification time. |
+| `POST` | `/api/cookies` | Save cookie text from `{"cookie_content":"..."}`. |
+| `DELETE` | `/api/cookies` | Delete the saved cookie file. |
+| `GET` | `/api/exclusions` | Return the active wildcard rules. |
+| `POST` | `/api/exclusions` | Replace rules using `{"patterns":["*sample*"]}`. |
+| `POST` | `/api/scan` | Inspect a folder using `{"url":"https://drive.google.com/drive/folders/..."}`. |
+| `POST` | `/api/reapply` | Re-evaluate the current in-memory scan with `{"destination_folder":"..."}`. |
+| `POST` | `/api/download` | Start a batch from `destination_folder`, optional `url`, and an `items` array; items with `selected: true` are queued. |
+| `POST` | `/api/cancel` | Request cancellation of the active batch. |
+| `POST` | `/api/reset` | Clear the in-memory workspace when no download is running. |
+| `GET` | `/api/events` | Receive `log` and `status` events over SSE. |
+| `GET` | `/api/history` | Return all audit records, newest first. |
+| `DELETE` | `/api/history/{record_id}` | Delete one history record. |
+| `DELETE` | `/api/history` | Delete all history records. |
+
+Example scan request:
+
+```bash
+curl -X POST http://localhost:8070/api/scan \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://drive.google.com/drive/folders/your-folder-id"}'
+```
+
+The scan response includes a destination folder name, destination existence status, cookie-use status, and item records. Each item includes its Drive ID, original and sanitized paths, size, category, and selection state. The server rejects scans during an active download and rejects download requests when no items are selected.
+
+The download endpoint returns after queueing the worker; it does not wait for the batch to finish. The worker writes the audit record after finishing its loop. `GET /api/history` returns an object with a `history` array. The SSE `log` event contains a message; the `status` event includes `is_running`, `progress`, and `completed_summary`. API responses can change as the application evolves; `/docs` reflects the running version.
+
+## Local development
+
+The container build uses the repository-root `requirements.txt`.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+mkdir -p downloads appdata
+export DOWNLOAD_DIR="$PWD/downloads"
+export DATA_DIR="$PWD/appdata"
+uvicorn backend.app:app --host 0.0.0.0 --port 8070 --reload
+```
+
+Open `http://localhost:8070`. The browser UI loads Alpine.js, Tailwind CSS, and Font Awesome from public CDNs, so the browser needs network access to those assets.
+
+To build the image from source:
+
+```bash
+docker build -t aetherdrive:local .
+```
+
+The main UI is `frontend/index.html`. A legacy `frontend/index copy.html` file also remains in the repository; the root URL serves `index.html`.
+
+## Security and privacy
+
+- **No built-in user authentication or HTTPS:** Do not expose this service directly to an untrusted network or the public internet. Restrict access with a firewall or place it behind an appropriately configured authenticated HTTPS reverse proxy.
+- **Protect cookie data:** A pasted Google Drive cookie file is stored as plaintext at `DATA_DIR/cookies.txt`. Treat it like a credential, limit access to the host data directory, and remove it from the UI when no longer needed.
+- **Protect persistent data:** The database contains Drive URLs and execution metadata. Ensure `/appdata` backups and host permissions are appropriate for your environment.
+- **Review links and content:** Only use folders and files you have permission to access and download. Respect copyright, privacy, and Google Drive terms.
+- **External dependencies:** Folder inspection and downloads depend on Google Drive and `gdown`; browser styling and behavior depend on CDN-hosted front-end libraries. Changes to those services can affect availability.
+
+## Troubleshooting
+
+| Symptom | Things to check |
+| --- | --- |
+| A folder cannot be scanned or returns no files | Confirm the URL points to a folder, the folder is accessible to the app, and Google Drive has not rate-limited the request. Try a current cookie export for an account that can access it. |
+| Cookie-based access is not used | Re-export a Netscape-format `cookies.txt` while signed in to Google Drive, paste it into the Cookie Session dialog, and confirm the cookie status. Cookies can expire or be rejected; the app can fall back to anonymous access. |
+| Files are classified as **On Disk** | Review the sanitized path and size. Re-Apply checks the selected destination again. Matching is path/size based, not a content hash. |
+| Expected files are in **Bloat** | Check the active wildcard patterns in Exclusions and remove or adjust any matching rule, then re-apply. |
+| A download fails | Check the live execution log and Google Drive access/quota status. Some files may be unavailable, rate-limited, or inaccessible to the configured account. |
+| History is empty after an update | Check the `/appdata` host mount and the `aether_history.db` file. The app does not migrate from old volume locations automatically; preserve the old data before changing mounts. |
+| The UI loads without styling or icons | Check browser access to the Tailwind, Alpine.js, and Font Awesome CDNs and reload the page. |
+| The app cannot save data | Confirm the host directories mapped to `/downloads` and `/appdata` exist and are writable by the container. |
+
+For container diagnostics:
+
+```bash
+docker compose ps
+docker compose logs --tail=200 aetherdrive
+```
+
+## Project structure
 
 ```text
-Course Masterclass/01 - Introduction.mp4
+.
+├── backend/
+│   ├── app.py                 # FastAPI routes, worker state, SSE, history and cookies
+│   ├── core.py                # Drive inspection, path cleanup, exclusions and file checks
+│   └── requirements.txt       # Backend dependency list
+├── frontend/
+│   ├── index.html             # Active single-page web interface
+│   └── index copy.html        # Legacy page snapshot
+├── .github/workflows/
+│   └── docker-publish.yml     # Multi-architecture GHCR image workflow
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt           # Dependencies used by the container and local setup
+└── LICENSE
 ```
 
-### Magic-Byte Header Table
+## License and acknowledgements
 
-During post-processing, files missing a valid extension have their first bytes inspected:
+AetherDrive is distributed under the [MIT License](LICENSE).
 
-| File Type | Header Magic Bytes | Restored Extension |
-| :--- | :--- | :--- |
-| MP4 Video | `....ftypmp42` or `....ftypisom` | `.mp4` |
-| MKV Video | `1A 45 DF A3` | `.mkv` |
-| ZIP Archive | `50 4B 03 04` (`PK\x03\x04`) | `.zip` |
-| RAR Archive | `Rar!` | `.rar` |
-| MP3 Audio | `ID3` | `.mp3` |
-| WAV Audio | `RIFF` | `.wav` |
-| PDF Document | `25 50 44 46` (`%PDF`) | `.pdf` |
-| PNG Image | `89 50 4E 47 0D 0A 1A 0A` | `.png` |
-| JPEG Image | `FF D8 FF` | `.jpg` |
-
----
-
-## Execution Audit Log & Data Retention
-
-- **Storage Location:** All historical runs are recorded in `/appdata/aether_history.db` (SQLite).
-- **Retention Policy:** Indefinite (no automatic rolling TTL or expiration).
-- **Management:** View, reload links, or delete specific entries directly from the **History** drawer. You can also purge all past records with **Clear All History Records**.
-- **Folder Reference:** Each download task saves its source Google Drive link to `source_url.txt` inside its destination folder.
-
----
-
-## API Reference
-
-The backend exposes an asynchronous OpenAPI interface:
-
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `POST` | `/api/scan` | Analyzes Drive folder link, runs filters, and returns an execution plan. |
-| `POST` | `/api/download` | Initiates asynchronous background downloading for approved plan items. |
-| `GET` | `/api/events` | SSE endpoint pushing real-time progress, counters, and log output. |
-| `GET` | `/api/history` | Fetches historical runs from the audit database. |
-| `DELETE` | `/api/history/{id}` | Deletes a specific historical record. |
-| `DELETE` | `/api/history` | Purges all records from the history database. |
-
----
-
-## Configuration & Environment
-
-| Parameter | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `PORT` | Integer | `8070` | Internal and exposed service port. |
-| `DOWNLOAD_DIR` | Path | `/downloads` | Container path where completed files are written. Mount a host folder here. |
-| `DATA_DIR` | Path | `/appdata` | Container path for the SQLite audit database and persistent state. Mount a host folder here. |
-
----
-
-## Troubleshooting & FAQ
-
-**Q: The download fails with "Too many requests" or rate-limiting errors.**
-
-A: Google Drive applies temporary quota restrictions on heavily shared public files. Wait a few hours or switch network paths.
-
-**Q: How do I change the downloads directory on my host machine?**
-
-A: Edit the left side of the `/downloads` volume mapping in `docker-compose.yml`:
-
-```yaml
-volumes:
-  - /Volumes/MyExternalDrive/Media:/downloads
-```
-
-**Q: Will my history survive a container update?**
-
-A: Yes, as long as `/appdata` is mapped to a host folder. The audit log lives in `/appdata/aether_history.db`.
-
----
-
-## Tech Stack
-
-- **Backend:** Python 3.11, FastAPI, Uvicorn, SQLite3, `sse-starlette`, `gdown`
-- **Frontend:** Alpine.js, Tailwind CSS (CDN)
-- **Deployment:** Docker, GitHub Actions (CI/CD Container Registry), Portainer
-
----
-
-## Third-Party Credits & Attributions
-
-AetherDrive is built upon open-source software:
-
-- [gdown](https://github.com/wkentaro/gdown) by Kentaro Wada (MIT License)
-- [FastAPI](https://fastapi.tiangolo.com/) by Sebastián Ramírez (MIT License)
-- [sse-starlette](https://github.com/sysid/sse-starlette) (BSD-3-Clause License)
-- [Alpine.js](https://alpinejs.dev/) by Caleb Porzio (MIT License)
-- [Tailwind CSS](https://tailwindcss.com/) by Tailwind Labs (MIT License)
-- [Uvicorn](https://www.uvicorn.org/) by Encode (BSD-3-Clause License)
-
----
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for complete terms and copyright details.
+The project uses FastAPI, Uvicorn, `gdown`, `requests`, `sse-starlette`, Alpine.js, Tailwind CSS, and Font Awesome. Their respective licenses apply; consult their upstream projects for details.
