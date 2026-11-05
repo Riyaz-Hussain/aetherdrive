@@ -180,10 +180,10 @@
                 <span>Select All</span>
               </label>
               <template x-if="!isRunning">
-                <button @click="startDownload()" :disabled="selectedCount === 0"
+                <button @click="startDownload()" :disabled="selectedCount === 0 || isStartingDownload"
                         class="flex-1 sm:flex-initial px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20">
-                  <i class="fa-solid fa-play"></i>
-                  <span>Execute (<span x-text="selectedCount"></span>)</span>
+                  <i class="fa-solid" :class="isStartingDownload ? 'fa-spinner fa-spin' : 'fa-play'"></i>
+                  <span x-text="isStartingDownload ? 'Starting...' : `Execute (${selectedCount})`"></span>
                 </button>
               </template>
               <template x-if="isRunning">
@@ -475,6 +475,7 @@
         activeTab: 'all',
         logs: [],
         progress: { current: 0, total: 0, percent: 0, speed: '', active_file: '', downloaded_bytes: 0, total_bytes: null, indeterminate: false },
+        isStartingDownload: false,
         completedSummary: null,
         isCleaningCanceledFiles: false,
         showCookieModal: false,
@@ -603,8 +604,8 @@
         },
 
         async startDownload() {
-          if (!this.plan) return;
-          this.completedSummary = null;
+          if (!this.plan || this.isStartingDownload || this.selectedCount === 0) return;
+          this.isStartingDownload = true;
           const payload = {
             destination_folder: this.plan.destination_folder,
             source_folder_name: this.plan.source_folder_name,
@@ -613,13 +614,23 @@
             items: this.plan.items
           };
           try {
-            await fetch('/api/download', {
+            const res = await fetch('/api/download', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload)
             });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              throw new Error(data.detail || `Server rejected the download request (${res.status}).`);
+            }
+            if (data.status !== 'started') {
+              throw new Error('The server did not confirm that the download started.');
+            }
+            this.completedSummary = null;
           } catch (e) {
-            alert('Failed to start download: ' + e);
+            alert('Failed to start download: ' + e.message);
+          } finally {
+            this.isStartingDownload = false;
           }
         },
 
