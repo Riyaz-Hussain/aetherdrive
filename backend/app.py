@@ -7,7 +7,6 @@ import threading
 import errno
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -139,6 +138,7 @@ class DownloadRequest(BaseModel):
     destination_folder: str
     source_folder_name: Optional[str] = ""
     timezone: Optional[str] = ""
+    local_datetime: Optional[str] = ""
     url: Optional[str] = ""
     items: List[Dict[str, Any]]
 
@@ -478,11 +478,18 @@ async def start_download(req: DownloadRequest):
     if not url_to_save:
         raise HTTPException(status_code=400, detail="No source URL is available for this download.")
 
-    try:
-        local_timezone = ZoneInfo(req.timezone) if req.timezone else datetime.datetime.now().astimezone().tzinfo
-    except ZoneInfoNotFoundError as err:
-        raise HTTPException(status_code=400, detail="The supplied timezone is not a valid IANA timezone.") from err
-    timezone_name = req.timezone or datetime.datetime.now().astimezone().tzname() or "Local"
+    if req.local_datetime:
+        try:
+            local_timestamp = datetime.datetime.fromisoformat(req.local_datetime)
+        except ValueError as err:
+            raise HTTPException(status_code=400, detail="The supplied local timestamp is invalid.") from err
+        if local_timestamp.utcoffset() is None:
+            raise HTTPException(status_code=400, detail="The supplied local timestamp must include a UTC offset.")
+        local_timezone = local_timestamp.tzinfo
+    else:
+        local_timezone = datetime.datetime.now().astimezone().tzinfo
+        local_timestamp = datetime.datetime.now(local_timezone)
+    timezone_name = req.timezone or local_timestamp.tzname() or "Local"
 
     dest_root = Path(req.destination_folder.strip()) if req.destination_folder.strip() else Path("Downloads")
     source_url_path = DOWNLOAD_DIR / dest_root / "source_url.txt"
@@ -500,7 +507,7 @@ async def start_download(req: DownloadRequest):
         )
         if matching_line is None or existing_lines[matching_line] == url_to_save:
             source_folder_name = (req.source_folder_name or "").strip() or req.destination_folder.strip()
-            timestamp = datetime.datetime.now(local_timezone).isoformat(timespec="seconds")
+            timestamp = local_timestamp.isoformat(timespec="seconds")
             source_entry = [
                 f"Google Drive: {source_folder_name}",
                 f"Date/Time: {timestamp}",

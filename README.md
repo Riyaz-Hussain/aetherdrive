@@ -100,7 +100,7 @@ docker compose logs -f aetherdrive
 Open `http://<docker-host-address>:8070` in a browser. The service listens on port `8070`.
 
 The example uses paths relative to the Compose file. For a NAS or another host, replace `./downloads` and `./appdata` with the actual host paths and ensure the container can write to both.
-The browser sends its IANA timezone with each download, so `source_url.txt` records the time in the downloading user's region. `TZ` is only used as a fallback for API clients that do not send a timezone; change `Asia/Kolkata` to an IANA timezone for your server if needed.
+The browser sends its local time, UTC offset, and IANA timezone with each download, so `source_url.txt` records the time in the downloading user's region without requiring timezone data on the server. `TZ` is used as a fallback for API clients that do not send local time; change `Asia/Kolkata` to an IANA timezone for your server if needed.
 
 ### Update the image
 

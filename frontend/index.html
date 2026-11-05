@@ -610,6 +610,7 @@
             destination_folder: this.plan.destination_folder,
             source_folder_name: this.plan.source_folder_name,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            local_datetime: this.localDateTime(),
             url: this.driveUrl.trim(),
             items: this.plan.items
           };
@@ -632,6 +633,24 @@
           } finally {
             this.isStartingDownload = false;
           }
+        },
+
+        localDateTime() {
+          const now = new Date();
+          const offset = -now.getTimezoneOffset();
+          const sign = offset >= 0 ? '+' : '-';
+          const hours = String(Math.floor(Math.abs(offset) / 60)).padStart(2, '0');
+          const minutes = String(Math.abs(offset) % 60).padStart(2, '0');
+          const local = [
+            now.getFullYear(),
+            String(now.getMonth() + 1).padStart(2, '0'),
+            String(now.getDate()).padStart(2, '0')
+          ].join('-') + 'T' + [
+            String(now.getHours()).padStart(2, '0'),
+            String(now.getMinutes()).padStart(2, '0'),
+            String(now.getSeconds()).padStart(2, '0')
+          ].join(':');
+          return `${local}${sign}${hours}:${minutes}`;
         },
 
         async cancelTask() {
