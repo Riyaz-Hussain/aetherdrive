@@ -353,9 +353,29 @@ async def start_download(req: DownloadRequest):
     selected = [it for it in req.items if it.get("selected")]
     if not selected:
         raise HTTPException(status_code=400, detail="No files selected.")
-    
+
+    url_to_save = (req.url or state.active_url).strip()
+    if not url_to_save:
+        raise HTTPException(status_code=400, detail="No source URL is available for this download.")
+
+    dest_root = Path(req.destination_folder.strip()) if req.destination_folder.strip() else Path("Downloads")
+    source_url_path = DOWNLOAD_DIR / dest_root / "source_url.txt"
+    try:
+        source_url_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_content = source_url_path.read_text(encoding="utf-8") if source_url_path.exists() else ""
+        existing_urls = existing_content.splitlines()
+        if url_to_save not in existing_urls:
+            with source_url_path.open("a", encoding="utf-8") as source_file:
+                if existing_content and not existing_content.endswith("\n"):
+                    source_file.write("\n")
+                source_file.write(f"{url_to_save}\n")
+    except (OSError, UnicodeError) as err:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save the source URL in the destination folder: {err}"
+        ) from err
+
     state.completed_summary = None
-    url_to_save = req.url or state.active_url
     asyncio.create_task(run_download_worker(req.destination_folder, selected, url_to_save))
     return {"status": "started", "queued": len(selected)}
 

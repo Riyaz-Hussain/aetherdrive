@@ -192,6 +192,7 @@ During post-processing, files missing a valid extension have their first bytes i
 - **Storage Location:** All historical runs are recorded in `/appdata/aether_history.db` (SQLite).
 - **Retention Policy:** Indefinite (no automatic rolling TTL or expiration).
 - **Management:** View, reload links, or delete specific entries directly from the **History** drawer. You can also purge all past records with **Clear All History Records**.
+- **Folder Reference:** Each download task saves its source Google Drive link to `source_url.txt` inside its destination folder.
 
 ---
 
