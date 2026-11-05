@@ -335,7 +335,7 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
             INSERT INTO audit_logs (timestamp, folder_name, url, total_files, downloaded_files, skipped_files, failed_files, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
             str(dest_root),
             original_url or state.active_url,
             total,

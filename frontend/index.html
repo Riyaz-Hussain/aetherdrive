@@ -405,7 +405,7 @@
                       x-text="item.status"></span>
               </div>
               <div class="text-slate-400 text-[11px] flex items-center justify-between">
-                <span x-text="item.timestamp"></span>
+                <span x-text="formatHistoryTimestamp(item.timestamp)"></span>
                 <span x-text="`Files: ${item.downloaded_files}/${item.total_files} (Failed: ${item.failed_files})`"></span>
               </div>
               <!-- URL and Action Buttons Row -->
@@ -651,6 +651,16 @@
             [item.folder_name, item.url, item.status, item.timestamp]
               .some(value => String(value ?? '').toLowerCase().includes(query))
           );
+        },
+        formatHistoryTimestamp(timestamp) {
+          if (!timestamp) return '';
+          const value = String(timestamp);
+          const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+          const zoned = /(?:Z|[+-]\d{2}:\d{2})$/i.test(normalized) ? normalized : `${normalized}Z`;
+          const date = new Date(zoned);
+          return Number.isNaN(date.getTime())
+            ? value
+            : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
         },
 
         async fetchExclusions() {
