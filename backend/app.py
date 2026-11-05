@@ -173,7 +173,9 @@ def clear_all_history():
 def scan_folder(req: ScanRequest):
     if state.is_running:
         raise HTTPException(status_code=400, detail="A download task is currently active.")
-    
+
+    state.completed_summary = None
+
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT pattern FROM exclusion_rules")

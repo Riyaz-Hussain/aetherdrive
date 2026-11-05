@@ -509,7 +509,7 @@
             const data = JSON.parse(e.data);
             this.isRunning = data.is_running;
             this.progress = data.progress;
-            if (data.completed_summary) {
+            if (!this.isScanning) {
               this.completedSummary = data.completed_summary;
             }
           });
