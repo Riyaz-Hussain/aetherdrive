@@ -46,7 +46,6 @@ def init_db():
                 pattern TEXT UNIQUE
             )
         """)
-        # Seed default exclusions if empty
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM exclusion_rules")
         if cursor.fetchone()[0] == 0:
@@ -185,7 +184,7 @@ def scan_folder(req: ScanRequest):
         plan = inspect_google_drive(req.url, exclusions)
         state.current_plan = plan
         state.master_items = plan["items"]
-        state.completed_summary = None
+        state.completed_summary = None  # Reset completion banner on new scan
         state.logs = [f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔍 Scanned folder: {plan['destination_folder']} ({len(plan['items'])} items found)"]
         if plan.get("cookie_active"):
             state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✓ Authenticated session active (cookies.txt applied)")
@@ -215,7 +214,7 @@ def reapply_rules(req: ReapplyRequest):
         size = item["size"]
         clean_sub = item["sanitized_path"]
         bloat = is_bloatware(raw_p, exclusions)
-        on_disk = check_file_on_disk(clean_sub, size) if not bloat else False
+        on_disk = check_file_on_disk(dest, clean_sub, size) if not bloat else False
 
         if bloat:
             cat = "bloat"
@@ -276,6 +275,8 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
     log_msg = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 Task initiated: {total} files queued for download."
     state.logs.append(log_msg)
 
+    dest_root = Path(dest_folder.strip()) if dest_folder.strip() else Path("Downloads")
+
     for idx, item in enumerate(approved_items):
         if state.cancel_requested:
             state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛑 Task canceled by user.")
@@ -283,7 +284,8 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
 
         file_id = item["id"]
         rel_path = Path(item["sanitized_path"])
-        target_path = DOWNLOAD_DIR / rel_path
+        # Nest underneath the configured destination folder
+        target_path = DOWNLOAD_DIR / dest_root / rel_path
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
         state.progress["current"] = idx + 1
@@ -314,7 +316,7 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
 
     state.is_running = False
     state.completed_summary = {
-        "folder": dest_folder,
+        "folder": str(dest_root),
         "total": total,
         "downloaded": downloaded,
         "failed": failed,
@@ -328,7 +330,7 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            dest_folder,
+            str(dest_root),
             "",
             total,
             downloaded,
@@ -345,6 +347,8 @@ async def start_download(req: DownloadRequest):
     selected = [it for it in req.items if it.get("selected")]
     if not selected:
         raise HTTPException(status_code=400, detail="No files selected.")
+    
+    state.completed_summary = None  # Immediately dismiss prior completion banner
     asyncio.create_task(run_download_worker(req.destination_folder, selected))
     return {"status": "started", "queued": len(selected)}
 

@@ -33,15 +33,10 @@ def get_cookie_file_path() -> Optional[str]:
     return None
 
 def sanitize_name(name: str) -> str:
-    # Strip URL domains
     cleaned = re.sub(r'https?://\S+|www\.\S+|[a-zA-Z0-9-]+\.(?:com|net|org|app|io|in|tv|me|cc|top|biz|info|site|online|xyz|vercel\.app)\b', '', name, flags=re.IGNORECASE)
-    # Strip handle tags
     cleaned = re.sub(r'@\w+', '', cleaned)
-    # Strip copy markers
     cleaned = re.sub(r'\bCopy(?:\s*\(\d+\))?\s*of\b', '', cleaned, flags=re.IGNORECASE)
-    # Strip brackets & noisy tags
     cleaned = re.sub(r'\[.*?\]|\(.*?\)', '', cleaned)
-    # Strip separators and cleanup spacing
     cleaned = re.sub(r'[_\-\.]{2,}', ' ', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned if cleaned else name.strip()
@@ -66,10 +61,9 @@ def is_bloatware(path_str: str, custom_exclusions: Optional[List[str]] = None) -
             return True
     return False
 
-def check_file_on_disk(sanitized_subpath: str, size: int) -> bool:
-    target_path = DOWNLOAD_DIR / sanitized_subpath
+def check_file_on_disk(destination_folder: str, sanitized_subpath: str, size: int) -> bool:
+    target_path = DOWNLOAD_DIR / destination_folder / sanitized_subpath
     if target_path.exists() and target_path.is_file():
-        # Allow tolerance of a few bytes or exact match
         disk_size = target_path.stat().st_size
         if disk_size == size or (size > 0 and abs(disk_size - size) < 1024):
             return True
@@ -102,7 +96,7 @@ def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Di
 
         clean_sub = sanitize_path_tree(raw_p)
         bloat = is_bloatware(raw_p, exclusions)
-        on_disk = check_file_on_disk(clean_sub, size) if not bloat else False
+        on_disk = check_file_on_disk(clean_destination_title, clean_sub, size) if not bloat else False
 
         if bloat:
             category = "bloat"

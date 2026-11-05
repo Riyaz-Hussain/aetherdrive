@@ -468,6 +468,7 @@
         },
 
         async scanFolder() {
+          this.completedSummary = null;
           if (!this.driveUrl.trim()) return;
           this.isScanning = true;
           try {
@@ -506,6 +507,7 @@
         },
 
         async startDownload() {
+          this.completedSummary = null;
           if (!this.plan) return;
           const payload = {
             destination_folder: this.plan.destination_folder,
