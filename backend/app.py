@@ -67,6 +67,7 @@ class JobState:
         self.current_plan: Optional[Dict[str, Any]] = None
         self.master_items: List[Dict[str, Any]] = []
         self.logs: List[str] = []
+        self.logs_generation = 0
         self.progress: Dict[str, Any] = {
             "current": 0,
             "total": 0,
@@ -229,6 +230,15 @@ def scan_folder(req: ScanRequest):
         raise HTTPException(status_code=400, detail="A download task is currently active.")
 
     state.completed_summary = None
+    state.progress = {
+        "current": 0, "total": 0, "percent": 0, "speed": "--",
+        "active_file": "", "downloaded_bytes": 0, "total_bytes": None,
+        "indeterminate": False
+    }
+    state.current_plan = None
+    state.master_items = []
+    state.logs_generation += 1
+    state.logs = [f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔎 Inspecting Google Drive folder..."]
 
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
@@ -240,8 +250,7 @@ def scan_folder(req: ScanRequest):
         state.active_url = req.url.strip()
         state.current_plan = plan
         state.master_items = plan["items"]
-        state.completed_summary = None
-        state.logs = [f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔍 Scanned folder: {plan['destination_folder']} ({len(plan['items'])} items found)"]
+        state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔍 Scanned folder: {plan['destination_folder']} ({len(plan['items'])} items found)")
         if plan.get("cookie_active"):
             state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✓ Authenticated session active (cookies.txt applied)")
         else:
@@ -251,6 +260,7 @@ def scan_folder(req: ScanRequest):
                 state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ℹ Running with anonymous session (no cookies.txt found)")
         return plan
     except Exception as e:
+        state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Inspection failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/reapply")
@@ -300,7 +310,13 @@ def reapply_rules(req: ReapplyRequest):
 async def sse_stream():
     async def event_generator():
         last_log_count = 0
+        last_logs_generation = state.logs_generation
         while True:
+            if state.logs_generation != last_logs_generation:
+                last_logs_generation = state.logs_generation
+                last_log_count = 0
+                yield {"event": "reset_logs", "data": "{}"}
+
             if len(state.logs) > last_log_count:
                 new_logs = state.logs[last_log_count:]
                 last_log_count = len(state.logs)

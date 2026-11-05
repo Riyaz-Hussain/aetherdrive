@@ -555,6 +555,9 @@
               if (el) el.scrollTop = el.scrollHeight;
             });
           });
+          evt.addEventListener('reset_logs', () => {
+            this.logs = [];
+          });
           evt.addEventListener('status', (e) => {
             const data = JSON.parse(e.data);
             this.isRunning = data.is_running;
@@ -569,6 +572,13 @@
         async scanFolder() {
           if (!this.driveUrl.trim()) return;
           this.completedSummary = null;
+          this.plan = null;
+          this.logs = [];
+          this.progress = {
+            current: 0, total: 0, percent: 0, speed: '--',
+            active_file: '', downloaded_bytes: 0, total_bytes: null,
+            indeterminate: false
+          };
           this.isScanning = true;
           try {
             const res = await fetch('/api/scan', {
