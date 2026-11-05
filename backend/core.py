@@ -42,7 +42,13 @@ def sanitize_name(name: str) -> str:
 
 def sanitize_path_tree(path_str: str) -> str:
     parts = Path(path_str).parts
-    clean_parts = [sanitize_name(part) or part for part in parts]
+    clean_parts = []
+    for part in parts:
+        clean = sanitize_name(part)
+        clean_part = clean if clean else part
+        # Prevent repeating consecutive directory names (e.g. "Book/Book" -> "Book")
+        if not clean_parts or clean_parts[-1].lower() != clean_part.lower():
+            clean_parts.append(clean_part)
     return str(Path(*clean_parts))
 
 def is_bloatware(path_str: str, custom_exclusions: Optional[List[str]] = None) -> bool:
@@ -60,8 +66,11 @@ def is_bloatware(path_str: str, custom_exclusions: Optional[List[str]] = None) -
 def check_file_on_disk(destination_folder: str, sanitized_subpath: str, size: int) -> bool:
     target_path = DOWNLOAD_DIR / destination_folder / sanitized_subpath
     if target_path.exists() and target_path.is_file():
+        # When gdown returns 0 B during folder scans, existence with non-zero disk size counts as on disk
+        if size == 0:
+            return target_path.stat().st_size > 0
         disk_size = target_path.stat().st_size
-        if disk_size == size or (size > 0 and abs(disk_size - size) < 1024):
+        if disk_size == size or abs(disk_size - size) < 1024:
             return True
     return False
 
@@ -94,20 +103,39 @@ def extract_remote_drive_title(url: str, cookie_path: Optional[str] = None) -> O
 
 def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Dict[str, Any]:
     cookie_path = get_cookie_file_path()
-    try:
-        remote_files = gdown.download_folder(
-            url=url,
-            skip_download=True,
-            quiet=True,
-            cookies_file=cookie_path
-        )
-    except Exception as e:
-        raise RuntimeError(f"Failed to scan Google Drive folder: {str(e)}")
+    remote_files = None
+    used_cookie = bool(cookie_path)
+
+    # 1. Attempt scan with cookies
+    if cookie_path:
+        try:
+            remote_files = gdown.download_folder(
+                url=url,
+                skip_download=True,
+                quiet=True,
+                cookies_file=cookie_path
+            )
+        except Exception:
+            remote_files = None
+
+    # 2. Automatic anonymous fallback if cookies were expired/empty
+    if not remote_files:
+        try:
+            remote_files = gdown.download_folder(
+                url=url,
+                skip_download=True,
+                quiet=True,
+                cookies_file=None
+            )
+            if remote_files:
+                used_cookie = False
+        except Exception as e:
+            raise RuntimeError(f"Failed to scan Google Drive folder: {str(e)}")
 
     if not remote_files:
         raise ValueError("No files discovered in the provided Google Drive link.")
 
-    web_title = extract_remote_drive_title(url, cookie_path)
+    web_title = extract_remote_drive_title(url, cookie_path if used_cookie else None)
     first_path = remote_files[0].path if hasattr(remote_files[0], 'path') else remote_files[0].get('path', '')
     raw_root_title = Path(first_path).parts[0] if first_path else "AetherDrive_Download"
 
@@ -120,6 +148,12 @@ def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Di
         size = getattr(f, 'size', 0) or 0
 
         clean_sub = sanitize_path_tree(raw_p)
+
+        # Strip destination folder prefix if it appears inside clean_sub
+        sub_parts = Path(clean_sub).parts
+        if len(sub_parts) > 1 and sub_parts[0].lower() == clean_destination_title.lower():
+            clean_sub = str(Path(*sub_parts[1:]))
+
         bloat = is_bloatware(raw_p, exclusions)
         on_disk = check_file_on_disk(clean_destination_title, clean_sub, size) if not bloat else False
 
@@ -145,7 +179,7 @@ def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Di
     return {
         "destination_folder": clean_destination_title,
         "destination_exists_on_disk": dest_exists,
-        "cookie_active": bool(cookie_path),
+        "cookie_active": used_cookie,
         "items": items
     }
 

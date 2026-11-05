@@ -189,7 +189,10 @@ def scan_folder(req: ScanRequest):
         if plan.get("cookie_active"):
             state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✓ Authenticated session active (cookies.txt applied)")
         else:
-            state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ℹ Running with anonymous session (no cookies.txt found)")
+            if get_cookie_file_path():
+                state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ Saved cookies were rejected/empty — fell back to anonymous session.")
+            else:
+                state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ℹ Running with anonymous session (no cookies.txt found)")
         return plan
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -273,7 +276,7 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
 
     cookie_path = get_cookie_file_path()
     dest_root = Path(dest_folder.strip()) if dest_folder.strip() else Path("Downloads")
-    state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 Task initiated: {total} files queued for download into folder '{dest_root}'.")
+    state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 Task initiated: {total} files queued into folder '{dest_root}'.")
 
     for idx, item in enumerate(approved_items):
         if state.cancel_requested:
@@ -283,7 +286,6 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
         file_id = item["id"]
         rel_sub = Path(item["sanitized_path"])
         
-        # If rel_sub already begins with dest_root name, don't duplicate it
         if len(rel_sub.parts) > 1 and rel_sub.parts[0].lower() == dest_root.name.lower():
             target_path = DOWNLOAD_DIR / dest_root / Path(*rel_sub.parts[1:])
         else:
