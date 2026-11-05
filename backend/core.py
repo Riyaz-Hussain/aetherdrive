@@ -191,6 +191,7 @@ def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Di
 
     return {
         "destination_folder": clean_destination_title,
+        "source_folder_name": clean_destination_title,
         "destination_exists_on_disk": dest_exists,
         "cookie_active": used_cookie,
         "items": items

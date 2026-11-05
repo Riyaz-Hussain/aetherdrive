@@ -40,7 +40,7 @@ The application is intended for folders and files you are authorized to access a
 - **Monitor a running batch.** View the current file, progress, and streamed log messages in the web interface. Cancel requests take effect between files.
 - **Reuse authorized Google Drive access.** Optionally provide a Netscape-format `cookies.txt` through the UI. The app attempts the scan with those cookies and falls back to anonymous access if that attempt does not return files.
 - **Keep a run history.** Review completed batch results, search history by folder, URL, status, or date, copy or reuse a link, and remove individual or all history entries.
-- **Keep the source link with the files.** Each accepted download task records its source URL in `source_url.txt` in the destination folder. Repeated links are not duplicated.
+- **Keep source details with the files.** Each accepted download task records the Google Drive folder name, local date and time, and source URL in `source_url.txt` in the destination folder. Repeated links are not duplicated.
 - **Use the responsive web UI.** On smaller screens the file plan switches from a table to cards.
 - **Repair some file extensions.** After a successful download, inspect known file signatures and correct a mismatched or missing extension when the target extension is available.
 

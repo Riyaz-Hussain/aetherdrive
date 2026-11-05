@@ -90,6 +90,7 @@ class ExclusionsUpdate(BaseModel):
 
 class DownloadRequest(BaseModel):
     destination_folder: str
+    source_folder_name: Optional[str] = ""
     url: Optional[str] = ""
     items: List[Dict[str, Any]]
 
@@ -363,12 +364,33 @@ async def start_download(req: DownloadRequest):
     try:
         source_url_path.parent.mkdir(parents=True, exist_ok=True)
         existing_content = source_url_path.read_text(encoding="utf-8") if source_url_path.exists() else ""
-        existing_urls = existing_content.splitlines()
-        if url_to_save not in existing_urls:
-            with source_url_path.open("a", encoding="utf-8") as source_file:
-                if existing_content and not existing_content.endswith("\n"):
-                    source_file.write("\n")
-                source_file.write(f"{url_to_save}\n")
+        existing_lines = existing_content.splitlines()
+        matching_line = next(
+            (
+                index for index, line in enumerate(existing_lines)
+                if line == url_to_save or line == f"URL: {url_to_save}"
+            ),
+            None
+        )
+        if matching_line is None or existing_lines[matching_line] == url_to_save:
+            source_folder_name = (req.source_folder_name or "").strip() or req.destination_folder.strip()
+            timestamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+            source_entry = [
+                f"Google Drive: {source_folder_name}",
+                f"Date/Time: {timestamp}",
+                f"URL: {url_to_save}"
+            ]
+            if matching_line is not None:
+                existing_lines[matching_line:matching_line + 1] = source_entry
+                updated_content = "\n".join(existing_lines)
+                if existing_content.endswith("\n"):
+                    updated_content += "\n"
+                source_url_path.write_text(updated_content, encoding="utf-8")
+            else:
+                with source_url_path.open("a", encoding="utf-8") as source_file:
+                    if existing_content:
+                        source_file.write("\n")
+                    source_file.write("\n".join(source_entry) + "\n")
     except (OSError, UnicodeError) as err:
         raise HTTPException(
             status_code=500,
