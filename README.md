@@ -37,7 +37,7 @@ The application is intended for folders and files you are authorized to access a
 - **Check the destination for existing files.** Compare scanned items with files under the selected destination and classify likely matches as already on disk.
 - **Choose what to download.** Filter the plan by category, select individual items or all visible items, and execute the selected batch.
 - **Rename the destination.** Set the folder name under the downloads directory before executing; reapply the plan to recalculate disk and exclusion categories.
-- **Monitor a running batch.** View the current file, progress, and streamed log messages in the web interface. Cancel requests take effect between files.
+- **Monitor a running batch.** View the current file, progress, and streamed log messages in the web interface. Cancel requests interrupt an active download at the next received chunk and prevent remaining files from starting.
 - **Clean up canceled batches.** After cancellation, optionally remove files created by that run and directories that are empty afterward. Pre-existing files are preserved.
 - **Reuse authorized Google Drive access.** Optionally provide a Netscape-format `cookies.txt` through the UI. The app attempts the scan with those cookies and falls back to anonymous access if that attempt does not return files.
 - **Keep a run history.** Review completed batch results, search history by folder, URL, status, or date, copy or reuse a link, and remove individual or all history entries.
@@ -189,7 +189,7 @@ FastAPI's interactive API documentation is available at `/docs` while the servic
 | `POST` | `/api/cancel` | Request cancellation of the active batch. |
 | `POST` | `/api/cleanup-canceled` | Remove files and folders tracked as newly created by the canceled batch. |
 | `POST` | `/api/reset` | Clear the in-memory workspace when no download is running. |
-| `GET` | `/api/events` | Receive `log` and `status` events over SSE. |
+| `GET` | `/api/events` | Receive `log`, `status`, and `reset_logs` events over SSE. `reset_logs` tells connected clients to clear stale logs when a new inspection starts. |
 | `GET` | `/api/history` | Return all audit records, newest first. |
 | `DELETE` | `/api/history/{record_id}` | Delete one history record. |
 | `DELETE` | `/api/history` | Delete all history records. |
