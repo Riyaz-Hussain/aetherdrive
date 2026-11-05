@@ -5,13 +5,15 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8070 \
+    TZ=Asia/Kolkata \
     DOWNLOAD_DIR=/downloads \
     DATA_DIR=/appdata
 
 # Install system dependencies including curl and git
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     curl \
     git \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install python dependencies

@@ -82,6 +82,7 @@ services:
     environment:
       DATA_DIR: /appdata
       DOWNLOAD_DIR: /downloads
+      TZ: Asia/Kolkata
     volumes:
       - ./downloads:/downloads
       - ./appdata:/appdata
@@ -98,6 +99,7 @@ docker compose logs -f aetherdrive
 Open `http://<docker-host-address>:8070` in a browser. The service listens on port `8070`.
 
 The example uses paths relative to the Compose file. For a NAS or another host, replace `./downloads` and `./appdata` with the actual host paths and ensure the container can write to both.
+The browser sends its IANA timezone with each download, so `source_url.txt` records the time in the downloading user's region. `TZ` is only used as a fallback for API clients that do not send a timezone; change `Asia/Kolkata` to an IANA timezone for your server if needed.
 
 ### Update the image
 
@@ -149,7 +151,7 @@ After a successful download, extension repair recognizes PNG, JPEG, GIF, PDF, ZI
 | `/appdata/aether_history.db` | Execution history and exclusion rules | Persist with a host mount or named volume |
 | `/appdata/cookies.txt` | Optional Google Drive cookie session | Persist with a host mount or named volume |
 
-History is retained indefinitely unless entries are deleted through the UI or API. A history record is written when a download worker completes; a scan by itself does not create a history entry. The UI displays timestamps in the browser's local timezone.
+History is retained indefinitely unless entries are deleted through the UI or API. A history record is written when a download worker completes; a scan by itself does not create a history entry. The UI displays history timestamps in the browser's local timezone, and `source_url.txt` records the downloading user's timezone.
 Run outcomes are recorded as `Success`, `Completed with errors`, or `Canceled`.
 
 Back up both persistent locations if you want to preserve downloads and app data. Stop the container before making a raw SQLite database copy.

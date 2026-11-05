@@ -13,6 +13,11 @@
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: #0f172a; }
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .progress-indeterminate { animation: progress-indeterminate 1.4s ease-in-out infinite; }
+    @keyframes progress-indeterminate {
+      from { transform: translateX(-120%); }
+      to { transform: translateX(420%); }
+    }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-indigo-500 selection:text-white"
@@ -105,7 +110,7 @@
           <template x-if="isRunning">
             <div class="flex items-center gap-2">
               <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-              <span class="font-mono text-emerald-300 truncate max-w-[200px] sm:max-w-sm" x-text="`${progress.active_file || 'Downloading...'} (${progress.current}/${progress.total})`"></span>
+              <span class="font-mono text-emerald-300 truncate max-w-[200px] sm:max-w-sm" x-text="progressLabel()"></span>
             </div>
           </template>
           <template x-if="!isRunning">
@@ -117,7 +122,8 @@
       <!-- Progress Bar -->
       <div class="w-full bg-slate-950 rounded-full h-2 sm:h-2.5 overflow-hidden border border-slate-800">
         <div class="bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400 h-full transition-all duration-300"
-             :style="`width: ${progress.percent}%`"></div>
+             :class="progress.indeterminate ? 'progress-indeterminate' : ''"
+             :style="`width: ${progress.indeterminate ? 28 : progress.percent}%`"></div>
       </div>
 
       <!-- Terminal Output Window -->
@@ -460,7 +466,7 @@
         plan: null,
         activeTab: 'all',
         logs: [],
-        progress: { current: 0, total: 0, percent: 0, speed: '', active_file: '' },
+        progress: { current: 0, total: 0, percent: 0, speed: '', active_file: '', downloaded_bytes: 0, total_bytes: null, indeterminate: false },
         completedSummary: null,
         showCookieModal: false,
         cookieInput: '',
@@ -471,6 +477,15 @@
         historyList: [],
         historySearch: '',
         copiedId: null,
+
+        progressLabel() {
+          const fileLabel = `${this.progress.active_file || 'Downloading...'} (${this.progress.current}/${this.progress.total})`;
+          if (this.progress.indeterminate) {
+            const downloadedMb = (this.progress.downloaded_bytes / 1048576).toFixed(1);
+            return `${fileLabel} · ${downloadedMb} MB`;
+          }
+          return `${fileLabel} · ${this.progress.percent}%`;
+        },
 
         async initApp() {
           this.fetchCookieStatus();
@@ -584,6 +599,7 @@
           const payload = {
             destination_folder: this.plan.destination_folder,
             source_folder_name: this.plan.source_folder_name,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             url: this.driveUrl.trim(),
             items: this.plan.items
           };

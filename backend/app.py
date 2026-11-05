@@ -3,8 +3,10 @@ import json
 import sqlite3
 import datetime
 import asyncio
+import threading
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -75,6 +77,48 @@ class JobState:
         self.completed_summary: Optional[Dict[str, Any]] = None
 
 state = JobState()
+gdown_progress_lock = threading.Lock()
+
+def download_with_progress(url: str, output: Path, cookie_path: Optional[str], expected_size: int, file_index: int, total_files: int) -> Optional[str]:
+    tqdm_module = gdown.download.__globals__["tqdm"]
+    original_tqdm = tqdm_module.tqdm
+    progress_bar_start = file_index / total_files * 100
+
+    class ProgressBar:
+        def __init__(self, total: Optional[int] = None, initial: int = 0, **kwargs: Any):
+            self.total = total or expected_size or None
+            self.n = initial
+            self.update(0)
+
+        def update(self, amount: int = 1):
+            self.n += amount
+            fraction = min(self.n / self.total, 1) if self.total else None
+            percent = (
+                progress_bar_start + fraction / total_files * 100
+                if fraction is not None
+                else progress_bar_start
+            )
+            state.progress.update({
+                "percent": min(int(percent), 99),
+                "downloaded_bytes": self.n,
+                "total_bytes": self.total,
+                "indeterminate": self.total is None
+            })
+
+        def close(self):
+            pass
+
+    with gdown_progress_lock:
+        tqdm_module.tqdm = ProgressBar
+        try:
+            return gdown.download(
+                url=url,
+                output=str(output),
+                quiet=False,
+                cookies_file=cookie_path
+            )
+        finally:
+            tqdm_module.tqdm = original_tqdm
 
 class ScanRequest(BaseModel):
     url: str
@@ -91,6 +135,7 @@ class ExclusionsUpdate(BaseModel):
 class DownloadRequest(BaseModel):
     destination_folder: str
     source_folder_name: Optional[str] = ""
+    timezone: Optional[str] = ""
     url: Optional[str] = ""
     items: List[Dict[str, Any]]
 
@@ -275,7 +320,11 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
     skipped = 0
     failed = 0
     total = len(approved_items)
-    state.progress = {"current": 0, "total": total, "percent": 0, "speed": "--", "active_file": ""}
+    state.progress = {
+        "current": 0, "total": total, "percent": 0, "speed": "--",
+        "active_file": "", "downloaded_bytes": 0, "total_bytes": None,
+        "indeterminate": False
+    }
 
     cookie_path = get_cookie_file_path()
     dest_root = Path(dest_folder.strip()) if dest_folder.strip() else Path("Downloads")
@@ -297,18 +346,23 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
         state.progress["current"] = idx + 1
-        state.progress["percent"] = int(((idx + 1) / total) * 100)
+        state.progress["percent"] = int((idx / total) * 100)
+        state.progress["downloaded_bytes"] = 0
+        state.progress["total_bytes"] = item.get("size") or None
+        state.progress["indeterminate"] = not bool(item.get("size"))
         state.progress["active_file"] = target_path.name
         state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⬇️ Downloading ({idx+1}/{total}): {target_path.name}")
 
         try:
             url = f"https://drive.google.com/uc?id={file_id}"
             output = await asyncio.to_thread(
-                gdown.download,
-                url=url,
-                output=str(target_path),
-                quiet=True,
-                cookies_file=cookie_path
+                download_with_progress,
+                url,
+                target_path,
+                cookie_path,
+                item.get("size") or 0,
+                idx,
+                total
             )
 
             if output and Path(output).exists():
@@ -321,6 +375,9 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
         except Exception as err:
             failed += 1
             state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Error: {target_path.name} | {str(err)}")
+        finally:
+            state.progress["percent"] = int(((idx + 1) / total) * 100)
+            state.progress["indeterminate"] = False
 
     state.is_running = False
     state.completed_summary = {
@@ -359,6 +416,12 @@ async def start_download(req: DownloadRequest):
     if not url_to_save:
         raise HTTPException(status_code=400, detail="No source URL is available for this download.")
 
+    try:
+        local_timezone = ZoneInfo(req.timezone) if req.timezone else datetime.datetime.now().astimezone().tzinfo
+    except ZoneInfoNotFoundError as err:
+        raise HTTPException(status_code=400, detail="The supplied timezone is not a valid IANA timezone.") from err
+    timezone_name = req.timezone or datetime.datetime.now().astimezone().tzname() or "Local"
+
     dest_root = Path(req.destination_folder.strip()) if req.destination_folder.strip() else Path("Downloads")
     source_url_path = DOWNLOAD_DIR / dest_root / "source_url.txt"
     try:
@@ -374,10 +437,11 @@ async def start_download(req: DownloadRequest):
         )
         if matching_line is None or existing_lines[matching_line] == url_to_save:
             source_folder_name = (req.source_folder_name or "").strip() or req.destination_folder.strip()
-            timestamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+            timestamp = datetime.datetime.now(local_timezone).isoformat(timespec="seconds")
             source_entry = [
                 f"Google Drive: {source_folder_name}",
                 f"Date/Time: {timestamp}",
+                f"Time Zone: {timezone_name}",
                 f"URL: {url_to_save}"
             ]
             if matching_line is not None:
@@ -391,6 +455,39 @@ async def start_download(req: DownloadRequest):
                     if existing_content:
                         source_file.write("\n")
                     source_file.write("\n".join(source_entry) + "\n")
+        else:
+            timestamp_index = next(
+                (
+                    index for index in range(matching_line - 1, -1, -1)
+                    if existing_lines[index].startswith("Date/Time: ")
+                ),
+                None
+            )
+            if timestamp_index is not None:
+                try:
+                    saved_timestamp = datetime.datetime.fromisoformat(existing_lines[timestamp_index][11:])
+                except ValueError:
+                    pass
+                else:
+                    existing_lines[timestamp_index] = (
+                        f"Date/Time: {saved_timestamp.astimezone(local_timezone).isoformat(timespec='seconds')}"
+                    )
+                    timezone_index = next(
+                        (
+                            index for index in range(timestamp_index + 1, matching_line)
+                            if existing_lines[index].startswith("Time Zone: ")
+                        ),
+                        None
+                    )
+                    timezone_line = f"Time Zone: {timezone_name}"
+                    if timezone_index is None:
+                        existing_lines.insert(timestamp_index + 1, timezone_line)
+                    else:
+                        existing_lines[timezone_index] = timezone_line
+                    updated_content = "\n".join(existing_lines)
+                    if existing_content.endswith("\n"):
+                        updated_content += "\n"
+                    source_url_path.write_text(updated_content, encoding="utf-8")
     except (OSError, UnicodeError) as err:
         raise HTTPException(
             status_code=500,
