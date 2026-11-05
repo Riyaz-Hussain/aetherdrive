@@ -187,9 +187,9 @@
                 </button>
               </template>
               <template x-if="isRunning">
-                <button @click="cancelTask()" class="flex-1 sm:flex-initial px-5 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20">
-                  <i class="fa-solid fa-stop"></i>
-                  <span>Cancel Job</span>
+                <button @click="cancelTask()" :disabled="isCancelingTask" class="flex-1 sm:flex-initial px-5 py-2.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-60 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20">
+                  <i class="fa-solid" :class="isCancelingTask ? 'fa-spinner fa-spin' : 'fa-stop'"></i>
+                  <span x-text="isCancelingTask ? 'Canceling...' : 'Cancel Job'"></span>
                 </button>
               </template>
             </div>
@@ -476,6 +476,7 @@
         logs: [],
         progress: { current: 0, total: 0, percent: 0, speed: '', active_file: '', downloaded_bytes: 0, total_bytes: null, indeterminate: false },
         isStartingDownload: false,
+        isCancelingTask: false,
         completedSummary: null,
         isCleaningCanceledFiles: false,
         showCookieModal: false,
@@ -557,6 +558,7 @@
           evt.addEventListener('status', (e) => {
             const data = JSON.parse(e.data);
             this.isRunning = data.is_running;
+            if (!data.is_running) this.isCancelingTask = false;
             this.progress = data.progress;
             if (!this.isScanning) {
               this.completedSummary = data.completed_summary;
@@ -654,10 +656,20 @@
         },
 
         async cancelTask() {
+          if (this.isCancelingTask) return;
+          this.isCancelingTask = true;
           try {
-            await fetch('/api/cancel', { method: 'POST' });
+            const res = await fetch('/api/cancel', { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              throw new Error(data.detail || `Server rejected the cancellation request (${res.status}).`);
+            }
+            if (data.status !== 'canceling') {
+              throw new Error('The server did not confirm the cancellation request.');
+            }
           } catch (e) {
-            console.error(e);
+            alert('Failed to cancel download: ' + e.message);
+            this.isCancelingTask = false;
           }
         },
 

@@ -81,6 +81,9 @@ class JobState:
 state = JobState()
 gdown_progress_lock = threading.Lock()
 
+class DownloadCancelled(Exception):
+    pass
+
 def download_with_progress(url: str, output: Path, cookie_path: Optional[str], expected_size: int, file_index: int, total_files: int) -> Optional[str]:
     tqdm_module = gdown.download.__globals__["tqdm"]
     original_tqdm = tqdm_module.tqdm
@@ -93,6 +96,8 @@ def download_with_progress(url: str, output: Path, cookie_path: Optional[str], e
             self.update(0)
 
         def update(self, amount: int = 1):
+            if state.cancel_requested:
+                raise DownloadCancelled()
             self.n += amount
             fraction = min(self.n / self.total, 1) if self.total else None
             percent = (
@@ -402,6 +407,7 @@ async def run_download_worker(
         state.progress["indeterminate"] = not bool(item.get("size"))
         state.progress["active_file"] = target_path.name
         state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⬇️ Downloading ({idx+1}/{total}): {target_path.name}")
+        item_finished = False
 
         try:
             url = f"https://drive.google.com/uc?id={file_id}"
@@ -415,6 +421,7 @@ async def run_download_worker(
                 total
             )
 
+            item_finished = True
             if output and Path(output).exists():
                 repaired = repair_extension_magic_bytes(Path(output))
                 if not target_preexisting and repaired not in existing_entries:
@@ -424,6 +431,8 @@ async def run_download_worker(
             else:
                 failed += 1
                 state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Failed: {target_path.name} | Reason: Rate limit or quota block")
+        except DownloadCancelled:
+            state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛑 Download canceled: {target_path.name}")
         except Exception as err:
             failed += 1
             state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Error: {target_path.name} | {str(err)}")
@@ -436,10 +445,16 @@ async def run_download_worker(
                     and entry.name.endswith(".part")
                 ):
                     track_cleanup_file(entry)
-            state.progress["percent"] = int(((idx + 1) / total) * 100)
+            if item_finished:
+                state.progress["percent"] = int(((idx + 1) / total) * 100)
             state.progress["indeterminate"] = False
 
+        if state.cancel_requested:
+            state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛑 Task canceled by user.")
+            break
+
     state.is_running = False
+    state.progress["indeterminate"] = False
     state.completed_summary = {
         "folder": str(dest_root),
         "total": total,
