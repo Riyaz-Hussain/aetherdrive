@@ -62,7 +62,9 @@ def is_bloatware(path_str: str, custom_exclusions: Optional[List[str]] = None) -
     return False
 
 def check_file_on_disk(destination_folder: str, sanitized_subpath: str, size: int) -> bool:
-    target_path = DOWNLOAD_DIR / destination_folder / sanitized_subpath
+    parts = Path(sanitized_subpath).parts
+    rel_tail = Path(*parts[1:]) if len(parts) > 1 else Path(parts[0])
+    target_path = DOWNLOAD_DIR / destination_folder / rel_tail
     if target_path.exists() and target_path.is_file():
         disk_size = target_path.stat().st_size
         if disk_size == size or (size > 0 and abs(disk_size - size) < 1024):

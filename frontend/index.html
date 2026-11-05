@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AetherDrive</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236366f1'><path d='M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z'/></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -90,6 +91,44 @@
           <i class="fa-solid fa-wand-magic-sparkles" :class="isScanning ? 'fa-spin' : ''"></i>
           <span x-text="isScanning ? 'Inspecting...' : 'Inspect & Generate Plan'"></span>
         </button>
+      </div>
+    </div>
+
+    <!-- Live SSE Execution Stream (Moved to Top) -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <i class="fa-solid fa-terminal text-xs text-indigo-400"></i>
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">Live SSE Execution Stream</h3>
+        </div>
+        <div class="flex items-center gap-3 text-xs text-slate-400">
+          <template x-if="isRunning">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              <span class="font-mono text-emerald-300" x-text="`Processing: ${progress.active_file || 'Preparing...'} (${progress.current}/${progress.total})`"></span>
+            </div>
+          </template>
+          <template x-if="!isRunning">
+            <span class="font-mono text-slate-500">Idle / Ready</span>
+          </template>
+        </div>
+      </div>
+
+      <!-- Progress Bar -->
+      <div class="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-slate-800">
+        <div class="bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400 h-2.5 transition-all duration-300"
+             :style="`width: ${progress.percent}%`"></div>
+      </div>
+
+      <!-- Terminal Window -->
+      <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-3 font-mono text-xs text-slate-300 h-44 overflow-y-auto space-y-1"
+           id="terminalLogs">
+        <template x-for="(log, idx) in logs" :key="idx">
+          <div class="leading-relaxed" x-text="log"></div>
+        </template>
+        <template x-if="logs.length === 0">
+          <div class="text-slate-600 italic">Logs and download events will stream here in real time...</div>
+        </template>
       </div>
     </div>
 
@@ -221,44 +260,6 @@
       </div>
     </template>
 
-    <!-- Real-time Progress & Console Log Section -->
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-3">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <i class="fa-solid fa-terminal text-xs text-indigo-400"></i>
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">Live SSE Execution Stream</h3>
-        </div>
-        <div class="flex items-center gap-3 text-xs text-slate-400">
-          <template x-if="isRunning">
-            <div class="flex items-center gap-2">
-              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-              <span class="font-mono" x-text="`Processing: ${progress.active_file || 'Preparing...'} (${progress.current}/${progress.total})`"></span>
-            </div>
-          </template>
-          <template x-if="!isRunning">
-            <span class="font-mono text-slate-500">Idle / Ready</span>
-          </template>
-        </div>
-      </div>
-
-      <!-- Progress Bar -->
-      <div class="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-800">
-        <div class="bg-gradient-to-r from-indigo-500 to-emerald-500 h-2 transition-all duration-300"
-             :style="`width: ${progress.percent}%`"></div>
-      </div>
-
-      <!-- Terminal Output Window -->
-      <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-3 font-mono text-xs text-slate-300 h-44 overflow-y-auto space-y-1"
-           id="terminalLogs">
-        <template x-for="(log, idx) in logs" :key="idx">
-          <div class="leading-relaxed" x-text="log"></div>
-        </template>
-        <template x-if="logs.length === 0">
-          <div class="text-slate-600 italic">Logs and download events will stream here in real time...</div>
-        </template>
-      </div>
-    </div>
-
   </main>
 
   <!-- Cookie Session Modal -->
@@ -274,7 +275,6 @@
         <button @click="showCookieModal = false" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
       </div>
 
-      <!-- Current Session Info -->
       <div class="p-3 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between text-xs">
         <div>
           <span class="text-slate-400 block">Status:</span>
@@ -291,15 +291,13 @@
         </template>
       </div>
 
-      <!-- Paste Text Area -->
       <div>
         <label class="block text-xs font-medium text-slate-400 mb-1">Paste Netscape cookies.txt content:</label>
         <textarea x-model="cookieInput" rows="7" placeholder="# Netscape HTTP Cookie File&#10;.google.com	TRUE	/	TRUE	...&#10;.drive.google.com	TRUE	/	TRUE	..."
                   class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"></textarea>
-        <p class="text-[11px] text-slate-500 mt-1">Export cookies from Chrome/Firefox using a standard extension (such as <i>Get cookies.txt LOCALLY</i>) while logged in to Google Drive.</p>
+        <p class="text-[11px] text-slate-500 mt-1">Export cookies from Chrome/Firefox using <i>Get cookies.txt LOCALLY</i> while logged in to Google Drive.</p>
       </div>
 
-      <!-- Modal Footer -->
       <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
         <button @click="showCookieModal = false" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition">Cancel</button>
         <button @click="saveCookies()" :disabled="!cookieInput.trim()"
@@ -468,8 +466,8 @@
         },
 
         async scanFolder() {
-          this.completedSummary = null;
           if (!this.driveUrl.trim()) return;
+          this.completedSummary = null;
           this.isScanning = true;
           try {
             const res = await fetch('/api/scan', {
@@ -507,8 +505,8 @@
         },
 
         async startDownload() {
-          this.completedSummary = null;
           if (!this.plan) return;
+          this.completedSummary = null;
           const payload = {
             destination_folder: this.plan.destination_folder,
             items: this.plan.items

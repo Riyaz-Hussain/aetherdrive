@@ -20,7 +20,6 @@ import gdown
 
 app = FastAPI(title="AetherDrive")
 
-# Persistent database setup
 DB_PATH = DATA_DIR / "aether_history.db"
 
 def init_db():
@@ -59,7 +58,6 @@ def init_db():
 
 init_db()
 
-# Application State
 class JobState:
     def __init__(self):
         self.is_running = False
@@ -184,7 +182,7 @@ def scan_folder(req: ScanRequest):
         plan = inspect_google_drive(req.url, exclusions)
         state.current_plan = plan
         state.master_items = plan["items"]
-        state.completed_summary = None  # Reset completion banner on new scan
+        state.completed_summary = None
         state.logs = [f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔍 Scanned folder: {plan['destination_folder']} ({len(plan['items'])} items found)"]
         if plan.get("cookie_active"):
             state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✓ Authenticated session active (cookies.txt applied)")
@@ -272,10 +270,8 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
     state.progress = {"current": 0, "total": total, "percent": 0, "speed": "--", "active_file": ""}
 
     cookie_path = get_cookie_file_path()
-    log_msg = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 Task initiated: {total} files queued for download."
-    state.logs.append(log_msg)
-
     dest_root = Path(dest_folder.strip()) if dest_folder.strip() else Path("Downloads")
+    state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 Task initiated: {total} files queued for download into folder '{dest_root}'.")
 
     for idx, item in enumerate(approved_items):
         if state.cancel_requested:
@@ -283,15 +279,16 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
             break
 
         file_id = item["id"]
-        rel_path = Path(item["sanitized_path"])
-        # Nest underneath the configured destination folder
-        target_path = DOWNLOAD_DIR / dest_root / rel_path
+        rel_parts = Path(item["sanitized_path"]).parts
+        # Strip the scanned remote root segment to prevent duplicated folder hierarchy
+        relative_tail = Path(*rel_parts[1:]) if len(rel_parts) > 1 else Path(rel_parts[0])
+        target_path = DOWNLOAD_DIR / dest_root / relative_tail
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
         state.progress["current"] = idx + 1
         state.progress["percent"] = int(((idx + 1) / total) * 100)
-        state.progress["active_file"] = rel_path.name
-        state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⬇️ Downloading ({idx+1}/{total}): {rel_path.name}")
+        state.progress["active_file"] = relative_tail.name
+        state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⬇️ Downloading ({idx+1}/{total}): {relative_tail.name}")
 
         try:
             url = f"https://drive.google.com/uc?id={file_id}"
@@ -309,10 +306,10 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
                 state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Completed: {repaired.name}")
             else:
                 failed += 1
-                state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Failed: {rel_path.name} | Reason: Rate limit or quota block")
+                state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Failed: {relative_tail.name} | Reason: Rate limit or quota block")
         except Exception as err:
             failed += 1
-            state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Error: {rel_path.name} | {str(err)}")
+            state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Error: {relative_tail.name} | {str(err)}")
 
     state.is_running = False
     state.completed_summary = {
@@ -323,7 +320,6 @@ async def run_download_worker(dest_folder: str, approved_items: List[Dict[str, A
         "status": "Canceled" if state.cancel_requested else ("Success" if failed == 0 else "Completed with errors")
     }
 
-    # Record in SQLite audit log
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
             INSERT INTO audit_logs (timestamp, folder_name, url, total_files, downloaded_files, skipped_files, failed_files, status)
@@ -348,7 +344,7 @@ async def start_download(req: DownloadRequest):
     if not selected:
         raise HTTPException(status_code=400, detail="No files selected.")
     
-    state.completed_summary = None  # Immediately dismiss prior completion banner
+    state.completed_summary = None
     asyncio.create_task(run_download_worker(req.destination_folder, selected))
     return {"status": "started", "queued": len(selected)}
 
@@ -369,7 +365,6 @@ def reset_workspace():
     state.logs = []
     return {"status": "cleared"}
 
-# Static Frontend Mount
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
