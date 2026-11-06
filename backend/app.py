@@ -726,6 +726,23 @@ async def resume_download_queue():
         state.queue_runner = asyncio.create_task(process_download_queue())
     return {"status": "started", "queued": len(state.download_queue)}
 
+@app.delete("/api/queue/{job_id}")
+def remove_queued_download(job_id: str):
+    queue_index = next(
+        (index for index, job in enumerate(state.download_queue) if job["id"] == job_id),
+        None
+    )
+    if queue_index is None:
+        raise HTTPException(status_code=404, detail="That batch is no longer waiting in the queue.")
+
+    job = state.download_queue.pop(queue_index)
+    if not state.download_queue and not state.current_job:
+        state.queue_paused = False
+    state.logs.append(
+        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🗑 Removed '{job['folder']}' from the download queue."
+    )
+    return {"status": "removed", "remaining": len(state.download_queue)}
+
 @app.post("/api/download/resume-canceled")
 async def resume_canceled_download():
     if state.is_running or state.current_job:

@@ -111,26 +111,44 @@
           <span x-text="isScanning ? 'Inspecting...' : 'Inspect & Plan'"></span>
         </button>
       </div>
+      <p class="mt-2 text-[11px] text-slate-500">
+        Queue multiple sources: inspect another folder while a batch runs. Requests are processed in order and managed below.
+      </p>
     </div>
 
-    <div x-show="currentJob || downloadQueue.length > 0"
-         class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
       <div class="flex items-center justify-between gap-2">
-        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">
-          <i class="fa-solid fa-list-ol text-indigo-400 mr-1"></i> Download Queue
-        </h3>
+        <div>
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">
+            <i class="fa-solid fa-list-ol text-indigo-400 mr-1"></i> Download Queue
+          </h3>
+          <p class="mt-1 text-[11px] text-slate-500">Active batch and waiting requests</p>
+        </div>
         <span class="text-xs text-slate-400" x-text="`${downloadQueue.length} waiting`"></span>
       </div>
       <template x-if="currentJob">
         <div class="flex items-center justify-between gap-3 rounded-lg bg-emerald-950/30 border border-emerald-900/60 px-3 py-2 text-xs">
-          <span class="text-emerald-300 font-medium">Now downloading: <span x-text="currentJob.folder"></span></span>
+          <span class="text-emerald-300 font-medium"><i class="fa-solid fa-circle-play mr-1"></i> Downloading: <span x-text="currentJob.folder"></span></span>
           <span class="text-emerald-400/80" x-text="`${currentJob.total} files`"></span>
         </div>
       </template>
       <template x-for="(job, index) in downloadQueue" :key="job.id">
         <div class="flex items-center justify-between gap-3 rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-xs">
-          <span class="text-slate-300"><span class="text-slate-500 mr-2" x-text="`#${index + 1}`"></span><span x-text="job.folder"></span></span>
-          <span class="text-slate-500 whitespace-nowrap" x-text="`${job.total} files`"></span>
+          <span class="min-w-0 truncate text-slate-300"><span class="text-slate-500 mr-2" x-text="`#${index + 1}`"></span><span x-text="job.folder"></span></span>
+          <div class="flex shrink-0 items-center gap-3">
+            <span class="text-slate-500 whitespace-nowrap" x-text="`${job.total} files`"></span>
+            <button @click="removeQueuedJob(job.id)" :disabled="removingQueuedJobId === job.id"
+                    :aria-label="`Remove ${job.folder} from queue`"
+                    class="rounded px-2 py-1 text-slate-400 hover:bg-rose-950/50 hover:text-rose-300 disabled:opacity-50">
+              <i class="fa-solid" :class="removingQueuedJobId === job.id ? 'fa-spinner fa-spin' : 'fa-xmark'"></i>
+              <span class="sr-only">Remove from queue</span>
+            </button>
+          </div>
+        </div>
+      </template>
+      <template x-if="!currentJob && downloadQueue.length === 0">
+        <div class="rounded-lg border border-dashed border-slate-700 px-3 py-3 text-center text-xs text-slate-500">
+          No active or waiting downloads. Inspect a source above to add a batch.
         </div>
       </template>
       <template x-if="queuePaused && downloadQueue.length && completedSummary?.resume_available">
@@ -559,6 +577,7 @@
         isRunning: false,
         currentJob: null,
         downloadQueue: [],
+        removingQueuedJobId: null,
         queuePaused: false,
         plan: null,
         activeTab: 'all',
@@ -766,6 +785,22 @@
             this.queuePaused = false;
           } catch (e) {
             alert(e.message);
+          }
+        },
+
+        async removeQueuedJob(jobId) {
+          if (this.removingQueuedJobId) return;
+          this.removingQueuedJobId = jobId;
+          try {
+            const res = await fetch(`/api/queue/${encodeURIComponent(jobId)}`, { method: 'DELETE' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || 'Failed to remove the queued batch.');
+            this.downloadQueue = this.downloadQueue.filter(job => job.id !== jobId);
+            if (this.downloadQueue.length === 0) this.queuePaused = false;
+          } catch (e) {
+            alert(e.message);
+          } finally {
+            this.removingQueuedJobId = null;
           }
         },
 

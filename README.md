@@ -36,7 +36,7 @@ The application is intended for folders and files you are authorized to access a
 - **Filter unwanted content.** Use editable, persistent wildcard rules to classify promotional or otherwise unwanted files.
 - **Check the destination for existing files.** Compare scanned items with files under the selected destination and classify likely matches as already on disk.
 - **Choose what to download.** Filter the plan by category, select individual items or all visible items, and execute the selected batch.
-- **Queue multiple download requests.** Inspect another source while a batch is running, then add its selected files to the queue. Queued batches start one at a time in submission order.
+- **Queue and manage multiple download requests.** The queue panel shows the active batch and waiting requests. Inspect another source while a batch is running, then add its selected files to the queue; remove any batch that is still waiting. Queued batches start one at a time in submission order, and the queue state reappears after a page refresh.
 - **Resume canceled batches.** Resume retries the interrupted and other unfinished files in the canceled batch, while leaving successful downloads alone. The retry runs before other queued batches; choosing cleanup instead discards the resume option.
 - **Rename the destination.** Set the folder name under the downloads directory before executing; reapply the plan to recalculate disk and exclusion categories.
 - **Monitor a running batch.** View the current file, progress, and streamed log messages in the web interface. Cancel requests interrupt an active download at the next received chunk and pause any pending batches.
@@ -194,6 +194,7 @@ FastAPI's interactive API documentation is available at `/docs` while the servic
 | `POST` | `/api/cancel` | Cancel the active batch; pending batches remain queued and paused. |
 | `POST` | `/api/download/resume-canceled` | Requeue unfinished files from the canceled batch ahead of pending requests. |
 | `POST` | `/api/queue/start` | Resume processing of pending queued batches. |
+| `DELETE` | `/api/queue/{job_id}` | Remove a batch that is still waiting in the queue. |
 | `POST` | `/api/cleanup-canceled` | Remove files and folders tracked as newly created by the canceled batch. |
 | `POST` | `/api/reset` | Clear the in-memory workspace when no download is running. |
 | `GET` | `/api/events` | Receive `log`, `status`, and `reset_logs` events over SSE. `reset_logs` tells connected clients to clear stale logs when a new inspection starts. |
