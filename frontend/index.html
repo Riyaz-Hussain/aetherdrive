@@ -47,7 +47,7 @@
       </button>
 
       <!-- Exclusions Button -->
-      <button @click="showExclusionsModal = true" class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 transition">
+      <button @click="openExclusionsModal()" class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 transition">
         <i class="fa-solid fa-filter text-indigo-400 sm:mr-1"></i> <span class="hidden sm:inline">Exclusions</span>
       </button>
 
@@ -309,6 +309,27 @@
                             }"
                             x-text="item.category === 'approved' ? 'Approved' : (item.category === 'on_disk' ? 'On Disk' : 'Bloat')">
                       </span>
+                      <div x-show="item.category === 'bloat' && item.bloat_reasons?.length"
+                           class="mt-1 space-y-1 text-[10px] text-amber-300">
+                        <template x-for="reason in (item.bloat_reasons || [])" :key="`${reason.pattern}-${reason.matched_on}`">
+                          <div class="flex items-center justify-between gap-1">
+                            <span x-text="`Matched rule: ${reason.pattern} (${reason.matched_on})`"></span>
+                            <button @click.stop="removeExclusionRule(reason.pattern)"
+                                    :disabled="removingExclusionRule === reason.pattern"
+                                    :title="`Remove ${reason.pattern} for all files`"
+                                    class="text-rose-300 hover:text-rose-200 underline underline-offset-2 whitespace-nowrap disabled:opacity-50">
+                              <span x-text="removingExclusionRule === reason.pattern ? 'Removing...' : 'Remove rule everywhere'"></span>
+                            </button>
+                          </div>
+                        </template>
+                        <button @click="openExclusionsModal()" class="text-indigo-300 hover:text-indigo-200 underline underline-offset-2">
+                          Edit exclusion rules
+                        </button>
+                      </div>
+                      <div x-show="item.category === 'bloat' && !item.bloat_reasons?.length"
+                           class="mt-1 text-[10px] text-amber-300">
+                        Excluded by an active rule
+                      </div>
                     </td>
                   </tr>
                 </template>
@@ -333,6 +354,27 @@
                         }"
                         x-text="item.category === 'approved' ? 'Approved' : (item.category === 'on_disk' ? 'On Disk' : 'Bloat')">
                   </span>
+                </div>
+                <div x-show="item.category === 'bloat'" class="pl-6 text-[11px] text-amber-300 space-y-1">
+                  <template x-if="item.bloat_reasons?.length">
+                    <div class="space-y-1">
+                      <template x-for="reason in item.bloat_reasons" :key="`${reason.pattern}-${reason.matched_on}`">
+                        <div class="flex flex-wrap items-center justify-between gap-1">
+                          <span x-text="`Matched rule: ${reason.pattern} (${reason.matched_on})`"></span>
+                          <button @click.stop="removeExclusionRule(reason.pattern)"
+                                  :disabled="removingExclusionRule === reason.pattern"
+                                  :title="`Remove ${reason.pattern} for all files`"
+                                  class="text-rose-300 hover:text-rose-200 underline underline-offset-2 disabled:opacity-50">
+                            <span x-text="removingExclusionRule === reason.pattern ? 'Removing...' : 'Remove rule everywhere'"></span>
+                          </button>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                  <div x-show="!item.bloat_reasons?.length">Excluded by an active rule</div>
+                  <button @click="openExclusionsModal()" class="text-indigo-300 hover:text-indigo-200 underline underline-offset-2">
+                    Edit exclusion rules
+                  </button>
                 </div>
                 <div class="flex items-center justify-between text-slate-500 text-[11px] pl-6 font-mono">
                   <span class="truncate max-w-[200px]" x-text="item.original_path"></span>
@@ -526,6 +568,7 @@
         cookieStatus: { has_cookies: false, file_size: 0, last_modified: '' },
         showExclusionsModal: false,
         exclusionsText: '',
+        removingExclusionRule: null,
         showHistoryDrawer: false,
         historyList: [],
         historySearch: '',
@@ -656,11 +699,11 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ destination_folder: this.plan.destination_folder })
             });
-            if (res.ok) {
-              this.plan = await res.json();
-            }
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || 'Failed to re-apply exclusion rules.');
+            this.plan = data;
           } catch (e) {
-            console.error(e);
+            alert(e.message);
           }
         },
 
@@ -851,25 +894,64 @@
         async fetchExclusions() {
           try {
             const res = await fetch('/api/exclusions');
+            if (!res.ok) throw new Error('Failed to load exclusion rules.');
             const data = await res.json();
             this.exclusionsText = data.exclusions.join('\n');
+            return true;
           } catch (e) {
-            console.error(e);
+            alert(e.message);
+            return false;
+          }
+        },
+
+        async openExclusionsModal() {
+          if (await this.fetchExclusions()) this.showExclusionsModal = true;
+        },
+
+        async removeExclusionRule(pattern) {
+          if (this.removingExclusionRule) return;
+          this.removingExclusionRule = pattern;
+          try {
+            const getRes = await fetch('/api/exclusions');
+            const currentData = await getRes.json().catch(() => ({}));
+            if (!getRes.ok) throw new Error(currentData.detail || 'Failed to load exclusion rules.');
+            const rules = currentData.exclusions || [];
+            const updatedRules = rules.filter(rule => rule.trim().toLowerCase() !== pattern.toLowerCase());
+            if (updatedRules.length === rules.length) {
+              throw new Error(`The rule ${pattern} is no longer active. Re-apply the plan to refresh it.`);
+            }
+
+            const saveRes = await fetch('/api/exclusions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ patterns: updatedRules })
+            });
+            const savedData = await saveRes.json().catch(() => ({}));
+            if (!saveRes.ok) throw new Error(savedData.detail || `Failed to remove ${pattern}.`);
+
+            this.exclusionsText = updatedRules.join('\n');
+            if (this.plan) await this.reapplyRules();
+          } catch (e) {
+            alert(e.message);
+          } finally {
+            this.removingExclusionRule = null;
           }
         },
 
         async saveExclusions() {
           const list = this.exclusionsText.split('\n').map(s => s.trim()).filter(Boolean);
           try {
-            await fetch('/api/exclusions', {
+            const res = await fetch('/api/exclusions', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ patterns: list })
             });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || 'Failed to save exclusion rules.');
             this.showExclusionsModal = false;
-            if (this.plan) this.reapplyRules();
+            if (this.plan) await this.reapplyRules();
           } catch (e) {
-            alert('Failed to save exclusions: ' + e);
+            alert(e.message);
           }
         },
 

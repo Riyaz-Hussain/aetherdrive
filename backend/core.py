@@ -66,17 +66,26 @@ def sanitize_path_tree(path_str: str) -> str:
             clean_parts.append(clean_part)
     return str(Path(*clean_parts))
 
-def is_bloatware(path_str: str, custom_exclusions: Optional[List[str]] = None) -> bool:
+def matching_exclusions(path_str: str, custom_exclusions: Optional[List[str]] = None) -> List[Dict[str, str]]:
     exclusions = custom_exclusions if custom_exclusions is not None else DEFAULT_EXCLUSIONS
     filename = Path(path_str).name.lower()
     path_lower = path_str.lower()
+    matches = []
     for pattern in exclusions:
         p_lower = pattern.lower().strip()
         if not p_lower:
             continue
-        if fnmatch.fnmatch(filename, p_lower) or fnmatch.fnmatch(path_lower, p_lower):
-            return True
-    return False
+        filename_matches = fnmatch.fnmatch(filename, p_lower)
+        path_matches = fnmatch.fnmatch(path_lower, p_lower)
+        if filename_matches or path_matches:
+            matches.append({
+                "pattern": pattern.strip(),
+                "matched_on": "filename and path" if filename_matches and path_matches else ("filename" if filename_matches else "path")
+            })
+    return matches
+
+def is_bloatware(path_str: str, custom_exclusions: Optional[List[str]] = None) -> bool:
+    return bool(matching_exclusions(path_str, custom_exclusions))
 
 def check_file_on_disk(destination_folder: str, sanitized_subpath: str, size: int) -> bool:
     target_path = DOWNLOAD_DIR / destination_folder / sanitized_subpath
@@ -264,7 +273,8 @@ def inspect_http_directory(url: str, exclusions: Optional[List[str]] = None) -> 
     items = []
     for file_url, raw_path in remote_files:
         clean_path = sanitize_path_tree(raw_path)
-        bloat = is_bloatware(raw_path, exclusions)
+        bloat_reasons = matching_exclusions(raw_path, exclusions)
+        bloat = bool(bloat_reasons)
         exists = (DOWNLOAD_DIR / destination / clean_path).is_file()
         category = "bloat" if bloat else ("on_disk" if exists else "approved")
         items.append({
@@ -277,6 +287,7 @@ def inspect_http_directory(url: str, exclusions: Optional[List[str]] = None) -> 
             "size_str": "Unknown",
             "size_known": False,
             "category": category,
+            "bloat_reasons": bloat_reasons,
             "selected": category == "approved"
         })
 
@@ -398,7 +409,8 @@ def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Di
         if len(sub_parts) > 1 and sanitize_destination_name(sub_parts[0]).lower() == clean_destination_title.lower():
             clean_sub = str(Path(*sub_parts[1:]))
 
-        bloat = is_bloatware(raw_p, exclusions)
+        bloat_reasons = matching_exclusions(raw_p, exclusions)
+        bloat = bool(bloat_reasons)
         on_disk = check_file_on_disk(clean_destination_title, clean_sub, size) if not bloat else False
 
         if bloat:
@@ -415,6 +427,7 @@ def inspect_google_drive(url: str, exclusions: Optional[List[str]] = None) -> Di
             "size": size,
             "size_str": format_size(size),
             "category": category,
+            "bloat_reasons": bloat_reasons,
             "selected": (category == "approved")
         })
 

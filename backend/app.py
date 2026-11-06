@@ -312,7 +312,7 @@ def reapply_rules(req: ReapplyRequest):
         cursor.execute("SELECT pattern FROM exclusion_rules")
         exclusions = [r[0] for r in cursor.fetchall()]
 
-    from backend.core import is_bloatware
+    from backend.core import matching_exclusions
     dest = req.destination_folder.strip()
     dest_exists = (DOWNLOAD_DIR / dest).exists()
 
@@ -321,7 +321,8 @@ def reapply_rules(req: ReapplyRequest):
         raw_p = item["original_path"]
         size = item["size"]
         clean_sub = item["sanitized_path"]
-        bloat = is_bloatware(raw_p, exclusions)
+        bloat_reasons = matching_exclusions(raw_p, exclusions)
+        bloat = bool(bloat_reasons)
         if item.get("size_known") is False:
             on_disk = (DOWNLOAD_DIR / dest / clean_sub).is_file() if not bloat else False
         else:
@@ -335,6 +336,7 @@ def reapply_rules(req: ReapplyRequest):
             cat = "approved"
 
         item["category"] = cat
+        item["bloat_reasons"] = bloat_reasons
         item["selected"] = (cat == "approved")
         recalculated.append(item)
 
