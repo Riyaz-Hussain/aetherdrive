@@ -5,6 +5,7 @@ import datetime
 import asyncio
 import threading
 import errno
+import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException
@@ -82,6 +83,11 @@ class JobState:
         self.completed_summary: Optional[Dict[str, Any]] = None
         self.cleanup_paths: Dict[str, tuple[int, int, int, int]] = {}
         self.cleanup_directories: Dict[str, tuple[int, int]] = {}
+        self.download_queue: List[Dict[str, Any]] = []
+        self.current_job: Optional[Dict[str, Any]] = None
+        self.queue_runner: Optional[asyncio.Task] = None
+        self.queue_paused = False
+        self.resume_job: Optional[Dict[str, Any]] = None
 
 state = JobState()
 gdown_progress_lock = threading.Lock()
@@ -249,19 +255,28 @@ def clear_all_history():
 
 @app.post("/api/scan")
 def scan_folder(req: ScanRequest):
-    if state.is_running:
-        raise HTTPException(status_code=400, detail="A download task is currently active.")
-
-    state.completed_summary = None
-    state.progress = {
-        "current": 0, "total": 0, "percent": 0, "speed": "--",
-        "active_file": "", "downloaded_bytes": 0, "total_bytes": None,
-        "indeterminate": False
-    }
+    if not state.is_running:
+        if not state.queue_paused:
+            preserve_canceled_actions = (
+                state.completed_summary
+                and state.completed_summary.get("status") == "Canceled"
+                and (
+                    state.completed_summary.get("cleanup_available")
+                    or state.completed_summary.get("resume_available")
+                )
+            )
+            if not preserve_canceled_actions:
+                state.completed_summary = None
+        state.progress = {
+            "current": 0, "total": 0, "percent": 0, "speed": "--",
+            "active_file": "", "downloaded_bytes": 0, "total_bytes": None,
+            "indeterminate": False
+        }
+        state.logs_generation += 1
+        state.logs = []
     state.current_plan = None
     state.master_items = []
-    state.logs_generation += 1
-    state.logs = [f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔎 Inspecting source URL..."]
+    state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔎 Inspecting source URL...")
 
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
@@ -355,7 +370,17 @@ async def sse_stream():
                 "data": json.dumps({
                     "is_running": state.is_running,
                     "progress": state.progress,
-                    "completed_summary": state.completed_summary
+                    "completed_summary": state.completed_summary,
+                    "current_job": state.current_job,
+                    "queue_paused": state.queue_paused,
+                    "download_queue": [
+                        {
+                            "id": job["id"],
+                            "folder": job["folder"],
+                            "total": len(job["items"])
+                        }
+                        for job in state.download_queue
+                    ]
                 })
             }
             await asyncio.sleep(0.5)
@@ -414,12 +439,14 @@ async def run_download_worker(
     state.completed_summary = None
     state.cleanup_paths = {}
     state.cleanup_directories = dict(created_source_directories or {})
+    state.resume_job = None
     if created_source_file:
         track_cleanup_file(created_source_file)
 
     downloaded = 0
     skipped = 0
     failed = 0
+    completed_ids = set()
     total = len(approved_items)
     state.progress = {
         "current": 0, "total": total, "percent": 0, "speed": "--",
@@ -484,6 +511,7 @@ async def run_download_worker(
                 if not target_preexisting and repaired not in existing_entries:
                     track_cleanup_file(repaired)
                 downloaded += 1
+                completed_ids.add(item["id"])
                 state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Completed: {repaired.name}")
             else:
                 failed += 1
@@ -512,12 +540,24 @@ async def run_download_worker(
 
     state.is_running = False
     state.progress["indeterminate"] = False
+    remaining_items = [item for item in approved_items if item["id"] not in completed_ids]
+    if state.cancel_requested and remaining_items:
+        state.resume_job = {
+            "id": uuid.uuid4().hex,
+            "folder": str(dest_root),
+            "items": remaining_items,
+            "url": original_url or state.active_url,
+            "created_source_file": None,
+            "created_source_directories": {}
+        }
     state.completed_summary = {
         "folder": str(dest_root),
         "total": total,
         "downloaded": downloaded,
         "failed": failed,
         "status": "Canceled" if state.cancel_requested else ("Success" if failed == 0 else "Completed with errors"),
+        "resume_available": state.resume_job is not None,
+        "resume_remaining": len(state.resume_job["items"]) if state.resume_job else 0,
         "cleanup_available": state.cancel_requested and bool(state.cleanup_paths or state.cleanup_directories),
         "cleanup_completed": False
     }
@@ -540,8 +580,6 @@ async def run_download_worker(
 
 @app.post("/api/download")
 async def start_download(req: DownloadRequest):
-    if state.is_running:
-        raise HTTPException(status_code=400, detail="Download already running.")
     selected = [it for it in req.items if it.get("selected")]
     if not selected:
         raise HTTPException(status_code=400, detail="No files selected.")
@@ -584,7 +622,7 @@ async def start_download(req: DownloadRequest):
             offset_minutes = offset_remainder // 60
             source_entry = [
                 f"{'Google Drive folder' if req.source_type == 'google_drive' else 'Website directory'}: {source_folder_name}",
-                f"Download started (local time): {format_source_datetime(local_timestamp)}",
+                f"Request queued (local time): {format_source_datetime(local_timestamp)}",
                 f"Time zone: {timezone_name} (UTC{offset_sign}{offset_hours:02d}:{offset_minutes:02d})",
                 f"Same time in UTC: {format_source_datetime(utc_timestamp)} UTC",
                 f"Source URL: {url_to_save}"
@@ -606,15 +644,106 @@ async def start_download(req: DownloadRequest):
             detail=f"Failed to save the source URL in the destination folder: {err}"
         ) from err
 
+    job = {
+        "id": uuid.uuid4().hex,
+        "folder": req.destination_folder.strip() or "Downloads",
+        "items": selected,
+        "url": url_to_save,
+        "created_source_file": source_url_path if source_file_is_new else None,
+        "created_source_directories": source_directories_is_new
+    }
+    state.download_queue.append(job)
+    if not state.is_running and not state.queue_paused and (state.queue_runner is None or state.queue_runner.done()):
+        state.queue_runner = asyncio.create_task(process_download_queue())
+    queue_position = len(state.download_queue) + (1 if state.current_job else 0)
+    if not (
+        state.completed_summary
+        and state.completed_summary.get("status") == "Canceled"
+        and (state.completed_summary.get("cleanup_available") or state.completed_summary.get("resume_available"))
+    ):
+        state.completed_summary = None
+    state.logs.append(
+        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 📥 Added '{job['folder']}' ({len(selected)} files) to download queue at position {queue_position}."
+    )
+    return {
+        "status": "queued",
+        "job_id": job["id"],
+        "queued": len(selected),
+        "queue_position": queue_position
+    }
+
+async def process_download_queue():
+    while state.download_queue:
+        job = state.download_queue.pop(0)
+        state.current_job = {"id": job["id"], "folder": job["folder"], "total": len(job["items"])}
+        try:
+            await run_download_worker(
+                job["folder"],
+                job["items"],
+                job["url"],
+                job["created_source_file"],
+                job["created_source_directories"]
+            )
+        except Exception as err:
+            state.is_running = False
+            state.progress["indeterminate"] = False
+            state.completed_summary = {
+                "folder": job["folder"],
+                "total": len(job["items"]),
+                "downloaded": 0,
+                "failed": len(job["items"]),
+                "status": "Completed with errors",
+                "resume_available": False,
+                "resume_remaining": 0,
+                "cleanup_available": False,
+                "cleanup_completed": False
+            }
+            state.logs.append(
+                f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Queue job failed for '{job['folder']}': {err}"
+            )
+        finally:
+            state.current_job = None
+        if state.completed_summary and state.completed_summary.get("status") == "Canceled" and state.download_queue:
+            state.queue_paused = True
+            state.logs.append(
+                f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⏸ Remaining downloads are paused. Resume the queue when ready."
+            )
+            break
+    if not state.download_queue:
+        state.queue_paused = False
+    state.queue_runner = None
+
+@app.post("/api/queue/start")
+async def resume_download_queue():
+    if state.is_running or state.current_job:
+        raise HTTPException(status_code=400, detail="A download is already running.")
+    if not state.download_queue:
+        return {"status": "empty"}
+    state.queue_paused = False
+    if state.queue_runner is None or state.queue_runner.done():
+        state.queue_runner = asyncio.create_task(process_download_queue())
+    return {"status": "started", "queued": len(state.download_queue)}
+
+@app.post("/api/download/resume-canceled")
+async def resume_canceled_download():
+    if state.is_running or state.current_job:
+        raise HTTPException(status_code=400, detail="A download is already running.")
+    if not state.resume_job or not state.resume_job["items"]:
+        raise HTTPException(status_code=400, detail="There is no canceled download with unfinished files to resume.")
+
+    job = state.resume_job
+    state.resume_job = None
+    state.download_queue.insert(0, job)
+    state.queue_paused = False
+    if state.queue_runner is None or state.queue_runner.done():
+        state.queue_runner = asyncio.create_task(process_download_queue())
+    if state.completed_summary:
+        state.completed_summary["resume_available"] = False
     state.completed_summary = None
-    asyncio.create_task(run_download_worker(
-        req.destination_folder,
-        selected,
-        url_to_save,
-        source_url_path if source_file_is_new else None,
-        source_directories_is_new
-    ))
-    return {"status": "started", "queued": len(selected)}
+    state.logs.append(
+        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ▶ Resuming '{job['folder']}' with {len(job['items'])} unfinished files."
+    )
+    return {"status": "started", "queued": len(job["items"])}
 
 @app.post("/api/cancel")
 def cancel_task():
@@ -625,7 +754,7 @@ def cancel_task():
 
 @app.post("/api/cleanup-canceled")
 def cleanup_canceled_downloads():
-    if state.is_running:
+    if state.is_running or state.current_job:
         raise HTTPException(status_code=400, detail="Cannot clean up while a download task is active.")
     if not state.completed_summary or state.completed_summary.get("status") != "Canceled":
         raise HTTPException(status_code=400, detail="There is no canceled download task to clean up.")
@@ -681,8 +810,10 @@ def cleanup_canceled_downloads():
 
     state.cleanup_paths.clear()
     state.cleanup_directories.clear()
+    state.resume_job = None
     state.completed_summary["cleanup_available"] = False
     state.completed_summary["cleanup_completed"] = True
+    state.completed_summary["resume_available"] = False
     state.logs.append(
         f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🧹 Removed {removed_files} created files and {removed_directories} empty folders."
     )
@@ -695,11 +826,12 @@ def cleanup_canceled_downloads():
 
 @app.post("/api/reset")
 def reset_workspace():
-    if state.is_running:
-        raise HTTPException(status_code=400, detail="Cannot reset while download is running.")
+    if state.is_running or state.current_job or state.download_queue:
+        raise HTTPException(status_code=400, detail="Cannot reset while downloads are running or queued.")
     state.current_plan = None
     state.master_items = []
     state.completed_summary = None
+    state.resume_job = None
     state.logs = []
     return {"status": "cleared"}
 

@@ -36,12 +36,14 @@ The application is intended for folders and files you are authorized to access a
 - **Filter unwanted content.** Use editable, persistent wildcard rules to classify promotional or otherwise unwanted files.
 - **Check the destination for existing files.** Compare scanned items with files under the selected destination and classify likely matches as already on disk.
 - **Choose what to download.** Filter the plan by category, select individual items or all visible items, and execute the selected batch.
+- **Queue multiple download requests.** Inspect another source while a batch is running, then add its selected files to the queue. Queued batches start one at a time in submission order.
+- **Resume canceled batches.** Resume retries the interrupted and other unfinished files in the canceled batch, while leaving successful downloads alone. The retry runs before other queued batches; choosing cleanup instead discards the resume option.
 - **Rename the destination.** Set the folder name under the downloads directory before executing; reapply the plan to recalculate disk and exclusion categories.
-- **Monitor a running batch.** View the current file, progress, and streamed log messages in the web interface. Cancel requests interrupt an active download at the next received chunk and prevent remaining files from starting.
+- **Monitor a running batch.** View the current file, progress, and streamed log messages in the web interface. Cancel requests interrupt an active download at the next received chunk and pause any pending batches.
 - **Clean up canceled batches.** After cancellation, optionally remove files created by that run and directories that are empty afterward. Pre-existing files are preserved.
 - **Reuse authorized Google Drive access.** Optionally provide a Netscape-format `cookies.txt` through the UI. The app attempts the scan with those cookies and falls back to anonymous access if that attempt does not return files.
 - **Keep a run history.** Review completed batch results, search history by folder, URL, status, or date, copy or reuse a link, and remove individual or all history entries.
-- **Keep source details with the files.** Each accepted download task records the source folder or directory name, a readable local start time with timezone and UTC offset, the equivalent UTC time, and source URL in `source_url.txt` in the destination folder. Repeated links are not duplicated.
+- **Keep source details with the files.** Each accepted download request records the source folder or directory name, a readable local queue time with timezone and UTC offset, the equivalent UTC time, and source URL in `source_url.txt` in the destination folder. Repeated links are not duplicated.
 - **Use the responsive web UI.** On smaller screens the file plan switches from a table to cards.
 - **Repair some file extensions.** After a successful download, inspect known file signatures and correct a mismatched or missing extension when the target extension is available.
 
@@ -50,11 +52,11 @@ The application is intended for folders and files you are authorized to access a
 1. The browser sends the supplied folder URL to the FastAPI service.
 2. Google Drive URLs are inspected with `gdown`, optionally retrying without cookies if the cookie-based scan returns no files. Other HTTP(S) URLs are treated as public HTML directory listings; their same-origin subdirectories are scanned recursively. Arbitrary web pages and authenticated website sessions are not supported.
 3. Each discovered path is sanitized and classified as **Approved**, **On Disk**, or **Bloat** using the saved wildcard rules and a local disk check.
-4. The user reviews the plan, edits the destination if needed, selects files, and starts a batch.
-5. The backend downloads selected files sequentially into `DOWNLOAD_DIR/<destination-folder>/`, streams events to the browser using Server-Sent Events (SSE), and attempts supported extension repairs.
+4. The user reviews the plan, edits the destination if needed, and selects files. Requests are added to the download queue; each batch downloads sequentially, and queued batches run in submission order.
+5. The backend downloads selected files into `DOWNLOAD_DIR/<destination-folder>/`, streams events to the browser using Server-Sent Events (SSE), and attempts supported extension repairs.
 6. When the worker finishes, the run is recorded in SQLite and appears in History.
 
-The plan, active worker state, progress, and live logs are held in server memory. They are not restored after a server/container restart. The history database, exclusion rules, cookie file, and downloaded files are separate persistent data.
+The plan, active worker state, pending download queue, progress, and live logs are held in server memory. They are not restored after a server/container restart. The history database, exclusion rules, cookie file, and downloaded files are separate persistent data.
 
 ## Quick start with Docker Compose
 
@@ -119,7 +121,7 @@ The repository's GitHub Actions workflow publishes container images to GHCR for 
 2. **Review the plan:** The counters and tabs show all scanned items, approved items, items considered on disk, and items matched by exclusion rules. Review paths, sizes, and statuses before proceeding.
 3. **Choose a destination:** Edit the destination directory name. Downloads are placed underneath the configured downloads directory. Use **Re-Apply** after changing the destination or exclusion rules to recalculate the plan against disk.
 4. **Select files:** Check individual items, or use the select-all checkbox to select all items in the current category view. Items classified as on disk or bloat are not selected by default, but can be selected in the plan.
-5. **Execute or cancel:** Choose **Execute** to start a batch. The live stream shows the current file and log events. **Cancel** stops an in-progress transfer at the next received download chunk and prevents remaining files from starting. After cancellation, choose **Remove Created Files** to remove files created by that run and any folders that are empty afterward. Existing files are kept.
+5. **Queue, execute, or cancel:** Choose **Execute** to submit a batch. If another batch is active, inspect another URL and submit its batch; it will be added to the visible queue and run in order. **Cancel** stops the active batch at the next received download chunk and pauses any pending batches. Use **Resume Canceled Download** to retry the interrupted and unfinished files before pending batches. Successfully downloaded files are not repeated. Alternatively, choose **Remove Created Files**; this discards the canceled batch's resume option. Existing files are kept.
 6. **Review history:** Open **History** to search and review completed runs. Copy a stored link, use it to start a new inspection, or delete history records.
 7. **Start another task:** Use **Start New Task** in the completion banner to reset the current in-memory workspace.
 
@@ -187,8 +189,10 @@ FastAPI's interactive API documentation is available at `/docs` while the servic
 | `POST` | `/api/exclusions` | Replace rules using `{"patterns":["*sample*"]}`. |
 | `POST` | `/api/scan` | Inspect a Google Drive folder or public HTML directory listing using `{"url":"https://..."}`. |
 | `POST` | `/api/reapply` | Re-evaluate the current in-memory scan with `{"destination_folder":"..."}`. |
-| `POST` | `/api/download` | Start a batch from `destination_folder`, optional `url`, and an `items` array; items with `selected: true` are queued. |
-| `POST` | `/api/cancel` | Request cancellation of the active batch. |
+| `POST` | `/api/download` | Add a batch from `destination_folder`, optional `url`, and an `items` array to the download queue; items with `selected: true` are included. |
+| `POST` | `/api/cancel` | Cancel the active batch; pending batches remain queued and paused. |
+| `POST` | `/api/download/resume-canceled` | Requeue unfinished files from the canceled batch ahead of pending requests. |
+| `POST` | `/api/queue/start` | Resume processing of pending queued batches. |
 | `POST` | `/api/cleanup-canceled` | Remove files and folders tracked as newly created by the canceled batch. |
 | `POST` | `/api/reset` | Clear the in-memory workspace when no download is running. |
 | `GET` | `/api/events` | Receive `log`, `status`, and `reset_logs` events over SSE. `reset_logs` tells connected clients to clear stale logs when a new inspection starts. |
@@ -204,9 +208,9 @@ curl -X POST http://localhost:8070/api/scan \
   -d '{"url":"https://drive.google.com/drive/folders/your-folder-id"}'
 ```
 
-The scan response includes a destination folder name, destination existence status, cookie-use status, and item records. Each item includes its Drive ID, original and sanitized paths, size, category, and selection state. The server rejects scans during an active download and rejects download requests when no items are selected.
+The scan response includes a destination folder name, destination existence status, cookie-use status, and item records. Each item includes its Drive ID (or website download URL), original and sanitized paths, size, category, and selection state. Scans are allowed while a batch is running so another request can be prepared. Download requests are queued and rejected if no items are selected.
 
-The download endpoint returns after queueing the worker; it does not wait for the batch to finish. The worker writes the audit record after finishing its loop. `GET /api/history` returns an object with a `history` array. The SSE `log` event contains a message; the `status` event includes `is_running`, `progress`, and `completed_summary`. API responses can change as the application evolves; `/docs` reflects the running version.
+The download endpoint returns after adding the request to the in-memory queue; it does not wait for the batch to finish. Its response includes the job ID and queue position. The worker writes the audit record after finishing each batch. `GET /api/history` returns an object with a `history` array. The SSE `log` event contains a message; the `status` event includes `is_running`, `progress`, `completed_summary`, the active job, and pending queue entries. API responses can change as the application evolves; `/docs` reflects the running version.
 
 ## Local development
 

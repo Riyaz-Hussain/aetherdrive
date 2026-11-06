@@ -76,11 +76,17 @@
           </div>
         </div>
         <div class="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <button x-show="completedSummary.status === 'Canceled' && completedSummary.resume_available"
+                  @click="resumeCanceledDownload()" :disabled="isResumingCanceledDownload"
+                  class="w-full sm:w-auto px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 shadow">
+            <i class="fa-solid" :class="isResumingCanceledDownload ? 'fa-spinner fa-spin' : 'fa-rotate-right'"></i>
+            <span x-text="isResumingCanceledDownload ? 'Resuming...' : `Resume Canceled Download (${completedSummary.resume_remaining})`"></span>
+          </button>
           <button x-show="completedSummary.status === 'Canceled' && completedSummary.cleanup_available"
                   @click="cleanupCanceledDownloads()" :disabled="isCleaningCanceledFiles"
                   class="w-full sm:w-auto px-3 py-1.5 bg-rose-950/60 border border-rose-800 hover:bg-rose-900/70 disabled:opacity-50 text-rose-200 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 shadow">
             <i class="fa-solid" :class="isCleaningCanceledFiles ? 'fa-spinner fa-spin' : 'fa-trash-can'"></i>
-            <span x-text="isCleaningCanceledFiles ? 'Removing...' : 'Remove Created Files'"></span>
+            <span x-text="isCleaningCanceledFiles ? 'Removing...' : (completedSummary.resume_available ? 'Remove Created Files (Discard Resume)' : 'Remove Created Files')"></span>
           </button>
           <button @click="startNewTask()" class="w-full sm:w-auto px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-white rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 shadow">
             <i class="fa-solid fa-plus"></i> Start New Task
@@ -95,16 +101,51 @@
         <div class="relative flex-1">
           <i class="fa-solid fa-link absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"></i>
           <input type="text" x-model="driveUrl" placeholder="Paste a Google Drive folder or public directory URL..."
-                 :disabled="isRunning || isScanning"
+                 :disabled="isScanning"
                  @keydown.enter="scanFolder()"
                  class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 transition" />
         </div>
-        <button @click="scanFolder()" :disabled="!driveUrl.trim() || isRunning || isScanning"
+        <button @click="scanFolder()" :disabled="!driveUrl.trim() || isScanning"
                 class="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20">
           <i class="fa-solid fa-wand-magic-sparkles" :class="isScanning ? 'fa-spin' : ''"></i>
           <span x-text="isScanning ? 'Inspecting...' : 'Inspect & Plan'"></span>
         </button>
       </div>
+    </div>
+
+    <div x-show="currentJob || downloadQueue.length > 0"
+         class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
+      <div class="flex items-center justify-between gap-2">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">
+          <i class="fa-solid fa-list-ol text-indigo-400 mr-1"></i> Download Queue
+        </h3>
+        <span class="text-xs text-slate-400" x-text="`${downloadQueue.length} waiting`"></span>
+      </div>
+      <template x-if="currentJob">
+        <div class="flex items-center justify-between gap-3 rounded-lg bg-emerald-950/30 border border-emerald-900/60 px-3 py-2 text-xs">
+          <span class="text-emerald-300 font-medium">Now downloading: <span x-text="currentJob.folder"></span></span>
+          <span class="text-emerald-400/80" x-text="`${currentJob.total} files`"></span>
+        </div>
+      </template>
+      <template x-for="(job, index) in downloadQueue" :key="job.id">
+        <div class="flex items-center justify-between gap-3 rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-xs">
+          <span class="text-slate-300"><span class="text-slate-500 mr-2" x-text="`#${index + 1}`"></span><span x-text="job.folder"></span></span>
+          <span class="text-slate-500 whitespace-nowrap" x-text="`${job.total} files`"></span>
+        </div>
+      </template>
+      <template x-if="queuePaused && downloadQueue.length && completedSummary?.resume_available">
+        <div class="rounded-lg bg-amber-950/30 border border-amber-900/60 px-3 py-2 text-xs text-amber-300">
+          Resuming the canceled download will retry its unfinished files first, then continue with these queued batches.
+        </div>
+      </template>
+      <template x-if="queuePaused && downloadQueue.length && !completedSummary?.resume_available">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg bg-amber-950/30 border border-amber-900/60 px-3 py-2">
+          <span class="text-xs text-amber-300">Queue paused after cancellation. Pending batches were not canceled.</span>
+          <button @click="resumeDownloadQueue()" class="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold whitespace-nowrap">
+            <i class="fa-solid fa-play mr-1"></i> Resume Queue
+          </button>
+        </div>
+      </template>
     </div>
 
     <!-- Live SSE Execution Stream (At the Top) -->
@@ -125,6 +166,11 @@
             <span class="font-mono text-slate-500">Idle / Ready</span>
           </template>
         </div>
+        <button x-show="isRunning" @click="cancelTask()" :disabled="isCancelingTask"
+                class="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5">
+          <i class="fa-solid" :class="isCancelingTask ? 'fa-spinner fa-spin' : 'fa-stop'"></i>
+          <span x-text="isCancelingTask ? 'Canceling...' : 'Cancel Active Batch'"></span>
+        </button>
       </div>
 
       <!-- Progress Bar -->
@@ -179,19 +225,11 @@
                        class="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer" />
                 <span>Select All</span>
               </label>
-              <template x-if="!isRunning">
-                <button @click="startDownload()" :disabled="selectedCount === 0 || isStartingDownload"
-                        class="flex-1 sm:flex-initial px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20">
-                  <i class="fa-solid" :class="isStartingDownload ? 'fa-spinner fa-spin' : 'fa-play'"></i>
-                  <span x-text="isStartingDownload ? 'Starting...' : `Execute (${selectedCount})`"></span>
-                </button>
-              </template>
-              <template x-if="isRunning">
-                <button @click="cancelTask()" :disabled="isCancelingTask" class="flex-1 sm:flex-initial px-5 py-2.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-60 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20">
-                  <i class="fa-solid" :class="isCancelingTask ? 'fa-spinner fa-spin' : 'fa-stop'"></i>
-                  <span x-text="isCancelingTask ? 'Canceling...' : 'Cancel Job'"></span>
-                </button>
-              </template>
+              <button @click="startDownload()" :disabled="selectedCount === 0 || isStartingDownload"
+                      class="flex-1 sm:flex-initial px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20">
+                <i class="fa-solid" :class="isStartingDownload ? 'fa-spinner fa-spin' : (isRunning || downloadQueue.length ? 'fa-list-ol' : 'fa-play')"></i>
+                <span x-text="isStartingDownload ? 'Adding...' : (isRunning || downloadQueue.length ? `Add to Queue (${selectedCount})` : `Execute (${selectedCount})`)"></span>
+              </button>
             </div>
           </div>
 
@@ -471,6 +509,9 @@
         driveUrl: '',
         isScanning: false,
         isRunning: false,
+        currentJob: null,
+        downloadQueue: [],
+        queuePaused: false,
         plan: null,
         activeTab: 'all',
         logs: [],
@@ -479,6 +520,7 @@
         isCancelingTask: false,
         completedSummary: null,
         isCleaningCanceledFiles: false,
+        isResumingCanceledDownload: false,
         showCookieModal: false,
         cookieInput: '',
         cookieStatus: { has_cookies: false, file_size: 0, last_modified: '' },
@@ -561,6 +603,9 @@
           evt.addEventListener('status', (e) => {
             const data = JSON.parse(e.data);
             this.isRunning = data.is_running;
+            this.currentJob = data.current_job;
+            this.downloadQueue = data.download_queue || [];
+            this.queuePaused = data.queue_paused || false;
             if (!data.is_running) this.isCancelingTask = false;
             this.progress = data.progress;
             if (!this.isScanning) {
@@ -571,14 +616,18 @@
 
         async scanFolder() {
           if (!this.driveUrl.trim()) return;
-          this.completedSummary = null;
+          if (!this.isRunning) {
+            const preserveCanceledActions = this.completedSummary?.status === 'Canceled'
+              && (this.completedSummary.cleanup_available || this.completedSummary.resume_available);
+            if (!this.queuePaused && !preserveCanceledActions) this.completedSummary = null;
+            this.logs = [];
+            this.progress = {
+              current: 0, total: 0, percent: 0, speed: '--',
+              active_file: '', downloaded_bytes: 0, total_bytes: null,
+              indeterminate: false
+            };
+          }
           this.plan = null;
-          this.logs = [];
-          this.progress = {
-            current: 0, total: 0, percent: 0, speed: '--',
-            active_file: '', downloaded_bytes: 0, total_bytes: null,
-            indeterminate: false
-          };
           this.isScanning = true;
           try {
             const res = await fetch('/api/scan', {
@@ -637,14 +686,52 @@
             if (!res.ok) {
               throw new Error(data.detail || `Server rejected the download request (${res.status}).`);
             }
-            if (data.status !== 'started') {
+            if (data.status !== 'queued') {
               throw new Error('The server did not confirm that the download started.');
             }
-            this.completedSummary = null;
+            if (!(this.completedSummary?.status === 'Canceled' && this.completedSummary.cleanup_available)) {
+              this.completedSummary = null;
+            }
+            if (!this.downloadQueue.some(job => job.id === data.job_id)) {
+              this.downloadQueue.push({
+                id: data.job_id,
+                folder: this.plan.destination_folder,
+                total: data.queued
+              });
+            }
+            alert(data.queue_position === 1
+              ? 'Download added to the queue and will start shortly.'
+              : `Download added to the queue at position ${data.queue_position}.`);
           } catch (e) {
             alert('Failed to start download: ' + e.message);
           } finally {
             this.isStartingDownload = false;
+          }
+        },
+
+        async resumeDownloadQueue() {
+          try {
+            const res = await fetch('/api/queue/start', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Failed to resume the queue.');
+            this.queuePaused = false;
+          } catch (e) {
+            alert(e.message);
+          }
+        },
+
+        async resumeCanceledDownload() {
+          if (this.isResumingCanceledDownload) return;
+          this.isResumingCanceledDownload = true;
+          try {
+            const res = await fetch('/api/download/resume-canceled', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Failed to resume the canceled download.');
+            this.completedSummary = null;
+          } catch (e) {
+            alert(e.message);
+          } finally {
+            this.isResumingCanceledDownload = false;
           }
         },
 
@@ -703,13 +790,15 @@
 
         async startNewTask() {
           try {
-            await fetch('/api/reset', { method: 'POST' });
+            const res = await fetch('/api/reset', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Unable to reset while downloads are active or queued.');
             this.plan = null;
             this.completedSummary = null;
             this.driveUrl = '';
             this.logs = [];
           } catch (e) {
-            console.error(e);
+            alert(e.message);
           }
         },
 
