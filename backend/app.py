@@ -47,6 +47,15 @@ def init_db():
                 pattern TEXT UNIQUE
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS download_jobs (
+                job_id TEXT PRIMARY KEY,
+                queue_position INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                completed_ids_json TEXT NOT NULL DEFAULT '[]'
+            )
+        """)
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM exclusion_rules")
         if cursor.fetchone()[0] == 0:
@@ -91,6 +100,89 @@ class JobState:
 
 state = JobState()
 gdown_progress_lock = threading.Lock()
+
+def serializable_job(job: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": job["id"],
+        "folder": job["folder"],
+        "items": job["items"],
+        "url": job["url"]
+    }
+
+def persist_job(job: Dict[str, Any], status: str, completed_ids: Optional[List[str]] = None, position: Optional[int] = None):
+    with sqlite3.connect(DB_PATH) as conn:
+        if position is None:
+            row = conn.execute("SELECT queue_position FROM download_jobs WHERE job_id = ?", (job["id"],)).fetchone()
+            if row:
+                position = row[0]
+            else:
+                position = conn.execute("SELECT COALESCE(MAX(queue_position), 0) + 1 FROM download_jobs").fetchone()[0]
+        conn.execute("""
+            INSERT INTO download_jobs (job_id, queue_position, status, payload_json, completed_ids_json)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(job_id) DO UPDATE SET
+                queue_position = excluded.queue_position,
+                status = excluded.status,
+                payload_json = excluded.payload_json,
+                completed_ids_json = excluded.completed_ids_json
+        """, (
+            job["id"],
+            position,
+            status,
+            json.dumps(serializable_job(job)),
+            json.dumps(completed_ids if completed_ids is not None else job.get("_completed_ids", []))
+        ))
+        conn.commit()
+
+def delete_persisted_job(job_id: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM download_jobs WHERE job_id = ?", (job_id,))
+        conn.commit()
+
+def restore_persisted_queue():
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT queue_position, status, payload_json, completed_ids_json FROM download_jobs ORDER BY queue_position"
+        ).fetchall()
+    interrupted = []
+    for _, status, payload_json, completed_ids_json in rows:
+        job = json.loads(payload_json)
+        job["created_source_file"] = None
+        job["created_source_directories"] = {}
+        job["_completed_ids"] = json.loads(completed_ids_json)
+        if status == "paused_resume":
+            state.resume_job = job
+            continue
+        if status == "running":
+            interrupted.append(job)
+            continue
+        state.download_queue.append(job)
+
+    if interrupted:
+        state.download_queue = interrupted + state.download_queue
+        state.logs.append(
+            f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ♻️ Restored {len(interrupted)} interrupted batch(es) after restart; completed files will be skipped."
+        )
+    state.queue_paused = state.resume_job is not None
+    if state.resume_job:
+        state.completed_summary = {
+            "folder": state.resume_job["folder"],
+            "total": len(state.resume_job["items"]),
+            "downloaded": 0,
+            "failed": 0,
+            "status": "Canceled",
+            "resume_available": True,
+            "resume_remaining": len(state.resume_job["items"]),
+            "cleanup_available": False,
+            "cleanup_completed": False
+        }
+
+restore_persisted_queue()
+
+@app.on_event("startup")
+async def restart_interrupted_downloads():
+    if state.download_queue and not state.queue_paused:
+        state.queue_runner = asyncio.create_task(process_download_queue())
 
 class DownloadCancelled(Exception):
     pass
@@ -434,7 +526,9 @@ async def run_download_worker(
     approved_items: List[Dict[str, Any]],
     original_url: str,
     created_source_file: Optional[Path] = None,
-    created_source_directories: Optional[Dict[str, tuple[int, int]]] = None
+    created_source_directories: Optional[Dict[str, tuple[int, int]]] = None,
+    job_id: Optional[str] = None,
+    previously_completed_ids: Optional[List[str]] = None
 ):
     state.is_running = True
     state.cancel_requested = False
@@ -445,13 +539,14 @@ async def run_download_worker(
     if created_source_file:
         track_cleanup_file(created_source_file)
 
-    downloaded = 0
+    completed_ids = set(previously_completed_ids or [])
+    downloaded = len(completed_ids)
     skipped = 0
     failed = 0
-    completed_ids = set()
     total = len(approved_items)
     state.progress = {
-        "current": 0, "total": total, "percent": 0, "speed": "--",
+        "current": len(completed_ids), "total": total,
+        "percent": int(len(completed_ids) / total * 100), "speed": "--",
         "active_file": "", "downloaded_bytes": 0, "total_bytes": None,
         "indeterminate": False
     }
@@ -461,6 +556,8 @@ async def run_download_worker(
     state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 Task initiated: {total} files queued into folder '{dest_root}'.")
 
     for idx, item in enumerate(approved_items):
+        if item["id"] in completed_ids:
+            continue
         if state.cancel_requested:
             state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛑 Task canceled by user.")
             break
@@ -484,6 +581,7 @@ async def run_download_worker(
         state.progress["active_file"] = target_path.name
         state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⬇️ Downloading ({idx+1}/{total}): {target_path.name}")
         item_finished = False
+        staging_path = None
 
         try:
             if item.get("source_type") == "http":
@@ -497,33 +595,45 @@ async def run_download_worker(
                 )
             else:
                 url = f"https://drive.google.com/uc?id={item['id']}"
+                staging_path = target_path.with_name(f"{target_path.name}.{job_id or uuid.uuid4().hex}.part")
+                staging_path.unlink(missing_ok=True)
                 output = await asyncio.to_thread(
                     download_with_progress,
                     url,
-                    target_path,
+                    staging_path,
                     cookie_path,
                     item.get("size") or 0,
                     idx,
                     total
                 )
-
-            item_finished = True
-            if output and Path(output).exists():
+                if output and Path(output).is_file() and Path(output).stat().st_size > 0:
+                    Path(output).replace(target_path)
+                    output = str(target_path)
+            if output and Path(output).is_file() and Path(output).stat().st_size > 0:
+                item_finished = True
                 repaired = repair_extension_magic_bytes(Path(output))
                 if not target_preexisting and repaired not in existing_entries:
                     track_cleanup_file(repaired)
                 downloaded += 1
                 completed_ids.add(item["id"])
+                if job_id:
+                    persist_job(
+                        {"id": job_id, "folder": str(dest_root), "items": approved_items, "url": original_url},
+                        "running",
+                        sorted(completed_ids)
+                    )
                 state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Completed: {repaired.name}")
             else:
                 failed += 1
-                state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Failed: {target_path.name} | Reason: Rate limit or quota block")
+                state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Failed: {target_path.name} | Reason: The source returned an empty or invalid file")
         except DownloadCancelled:
             state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛑 Download canceled: {target_path.name}")
         except Exception as err:
             failed += 1
             state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Error: {target_path.name} | {str(err)}")
         finally:
+            if staging_path and staging_path.exists() and not state.cancel_requested:
+                staging_path.unlink(missing_ok=True)
             for entry in target_path.parent.iterdir():
                 if (
                     entry not in existing_entries
@@ -545,12 +655,13 @@ async def run_download_worker(
     remaining_items = [item for item in approved_items if item["id"] not in completed_ids]
     if state.cancel_requested and remaining_items:
         state.resume_job = {
-            "id": uuid.uuid4().hex,
+            "id": job_id or uuid.uuid4().hex,
             "folder": str(dest_root),
             "items": remaining_items,
             "url": original_url or state.active_url,
             "created_source_file": None,
-            "created_source_directories": {}
+            "created_source_directories": {},
+            "_completed_ids": []
         }
     state.completed_summary = {
         "folder": str(dest_root),
@@ -654,6 +765,7 @@ async def start_download(req: DownloadRequest):
         "created_source_file": source_url_path if source_file_is_new else None,
         "created_source_directories": source_directories_is_new
     }
+    persist_job(job, "pending", [])
     state.download_queue.append(job)
     if not state.is_running and not state.queue_paused and (state.queue_runner is None or state.queue_runner.done()):
         state.queue_runner = asyncio.create_task(process_download_queue())
@@ -677,6 +789,8 @@ async def start_download(req: DownloadRequest):
 async def process_download_queue():
     while state.download_queue:
         job = state.download_queue.pop(0)
+        completed_ids = job.get("_completed_ids", [])
+        persist_job(job, "running", completed_ids)
         state.current_job = {"id": job["id"], "folder": job["folder"], "total": len(job["items"])}
         try:
             await run_download_worker(
@@ -684,9 +798,16 @@ async def process_download_queue():
                 job["items"],
                 job["url"],
                 job["created_source_file"],
-                job["created_source_directories"]
+                job["created_source_directories"],
+                job["id"],
+                completed_ids
             )
+            if state.resume_job and state.resume_job["id"] == job["id"]:
+                persist_job(state.resume_job, "paused_resume", [])
+            else:
+                delete_persisted_job(job["id"])
         except Exception as err:
+            delete_persisted_job(job["id"])
             state.is_running = False
             state.progress["indeterminate"] = False
             state.completed_summary = {
@@ -736,6 +857,7 @@ def remove_queued_download(job_id: str):
         raise HTTPException(status_code=404, detail="That batch is no longer waiting in the queue.")
 
     job = state.download_queue.pop(queue_index)
+    delete_persisted_job(job_id)
     if not state.download_queue and not state.current_job:
         state.queue_paused = False
     state.logs.append(
@@ -752,6 +874,8 @@ async def resume_canceled_download():
 
     job = state.resume_job
     state.resume_job = None
+    job["_completed_ids"] = []
+    persist_job(job, "pending", [])
     state.download_queue.insert(0, job)
     state.queue_paused = False
     if state.queue_runner is None or state.queue_runner.done():
@@ -827,6 +951,8 @@ def cleanup_canceled_downloads():
             if err.errno != errno.ENOTEMPTY:
                 raise HTTPException(status_code=500, detail=f"Failed to remove folder {relative_path}: {err}") from err
 
+    if state.resume_job:
+        delete_persisted_job(state.resume_job["id"])
     state.cleanup_paths.clear()
     state.cleanup_directories.clear()
     state.resume_job = None

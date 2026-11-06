@@ -58,6 +58,14 @@
     </div>
   </header>
 
+  <div x-show="notification" x-cloak x-transition
+       role="status" aria-live="polite"
+       :class="notificationType === 'error' ? 'border-rose-800/70 text-rose-200' : 'border-emerald-800/70 text-emerald-200'"
+       class="fixed bottom-4 right-4 z-50 max-w-sm rounded-xl border bg-slate-900 px-4 py-3 text-xs shadow-xl">
+    <i class="fa-solid mr-2" :class="notificationType === 'error' ? 'fa-circle-exclamation text-rose-400' : 'fa-circle-check text-emerald-400'"></i>
+    <span x-text="notification"></span>
+  </div>
+
   <!-- Main Container -->
   <main class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
 
@@ -598,6 +606,9 @@
         historyList: [],
         historySearch: '',
         copiedId: null,
+        notification: '',
+        notificationType: 'success',
+        notificationTimer: null,
 
         progressLabel() {
           const fileLabel = `${this.progress.active_file || 'Downloading...'} (${this.progress.current}/${this.progress.total})`;
@@ -612,6 +623,15 @@
           this.fetchCookieStatus();
           this.fetchExclusions();
           this.initSSE();
+        },
+
+        notify(message, type = 'success') {
+          this.notification = message;
+          this.notificationType = type;
+          clearTimeout(this.notificationTimer);
+          this.notificationTimer = setTimeout(() => {
+            this.notification = '';
+          }, 4000);
         },
 
         async fetchCookieStatus() {
@@ -767,11 +787,11 @@
                 total: data.queued
               });
             }
-            alert(data.queue_position === 1
+            this.notify(data.queue_position === 1
               ? 'Download added to the queue and will start shortly.'
               : `Download added to the queue at position ${data.queue_position}.`);
           } catch (e) {
-            alert('Failed to start download: ' + e.message);
+            this.notify('Failed to add download: ' + e.message, 'error');
           } finally {
             this.isStartingDownload = false;
           }

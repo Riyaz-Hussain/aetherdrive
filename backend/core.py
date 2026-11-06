@@ -90,9 +90,11 @@ def is_bloatware(path_str: str, custom_exclusions: Optional[List[str]] = None) -
 def check_file_on_disk(destination_folder: str, sanitized_subpath: str, size: int) -> bool:
     target_path = DOWNLOAD_DIR / destination_folder / sanitized_subpath
     if target_path.exists() and target_path.is_file():
-        if size == 0:
-            return target_path.stat().st_size > 0
         disk_size = target_path.stat().st_size
+        if disk_size == 0:
+            return False
+        if size == 0:
+            return True
         if disk_size == size or abs(disk_size - size) < 1024:
             return True
     return False
@@ -275,7 +277,8 @@ def inspect_http_directory(url: str, exclusions: Optional[List[str]] = None) -> 
         clean_path = sanitize_path_tree(raw_path)
         bloat_reasons = matching_exclusions(raw_path, exclusions)
         bloat = bool(bloat_reasons)
-        exists = (DOWNLOAD_DIR / destination / clean_path).is_file()
+        existing_path = DOWNLOAD_DIR / destination / clean_path
+        exists = existing_path.is_file() and existing_path.stat().st_size > 0
         category = "bloat" if bloat else ("on_disk" if exists else "approved")
         items.append({
             "id": file_url,
@@ -316,13 +319,36 @@ def download_http_file(url: str, output: Path, source_url: str, on_chunk) -> str
     session = requests.Session()
     session.headers["User-Agent"] = "AetherDrive/1.0 (authorized directory downloads)"
     temporary_path = output.with_name(output.name + ".part")
-    with _safe_get(session, url, base_origin, base_path, stream=True) as response:
-        with temporary_path.open("wb") as file:
-            for chunk in response.iter_content(chunk_size=1024 * 128):
-                if chunk:
-                    on_chunk(len(chunk))
-                    file.write(chunk)
-    temporary_path.replace(output)
+    bytes_written = 0
+    try:
+        with _safe_get(session, url, base_origin, base_path, stream=True) as response:
+            content_length = response.headers.get("Content-Length")
+            try:
+                expected_bytes = int(content_length) if content_length is not None else None
+            except ValueError:
+                expected_bytes = None
+            with temporary_path.open("wb") as file:
+                for chunk in response.iter_content(chunk_size=1024 * 128):
+                    if chunk:
+                        on_chunk(len(chunk))
+                        file.write(chunk)
+                        bytes_written += len(chunk)
+            content_encoding = response.headers.get("Content-Encoding", "").lower()
+            if bytes_written == 0:
+                raise ValueError("The source returned an empty file; it was not saved.")
+            if (
+                expected_bytes is not None
+                and expected_bytes > 0
+                and content_encoding in {"", "identity"}
+                and bytes_written != expected_bytes
+            ):
+                raise ValueError(
+                    f"The source returned an incomplete file ({bytes_written} of {expected_bytes} bytes)."
+                )
+        temporary_path.replace(output)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
     return str(output)
 
 def extract_remote_drive_title(url: str, cookie_path: Optional[str] = None) -> Optional[str]:

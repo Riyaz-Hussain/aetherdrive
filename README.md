@@ -35,8 +35,10 @@ The application is intended for folders and files you are authorized to access a
 - **Clean up folder and file names.** Remove common URL/domain text, `@handles`, copy labels, bracketed annotations, and repeated adjacent path components from local paths.
 - **Filter unwanted content.** Use editable, persistent wildcard rules to classify promotional or otherwise unwanted files.
 - **Check the destination for existing files.** Compare scanned items with files under the selected destination and classify likely matches as already on disk.
+- **Verify downloaded files are non-empty.** Empty or truncated website responses are rejected instead of being reported as successful; zero-byte files are not treated as already downloaded during a later inspection.
 - **Choose what to download.** Filter the plan by category, select individual items or all visible items, and execute the selected batch.
 - **Queue and manage multiple download requests.** The queue panel shows the active batch and waiting requests. Inspect another source while a batch is running, then add its selected files to the queue; remove any batch that is still waiting. Queued batches start one at a time in submission order, and the queue state reappears after a page refresh.
+- **Continue downloads after container restarts.** The active and waiting batches are saved in the application database. After a restart or image upgrade, waiting batches resume automatically; completed files in an interrupted batch are skipped, and the interrupted file is retried. Keep both `/appdata` and `/downloads` on persistent host storage or Docker volumes.
 - **Resume canceled batches.** Resume retries the interrupted and other unfinished files in the canceled batch, while leaving successful downloads alone. The retry runs before other queued batches; choosing cleanup instead discards the resume option.
 - **Rename the destination.** Set the folder name under the downloads directory before executing; reapply the plan to recalculate disk and exclusion categories.
 - **Monitor a running batch.** View the current file, progress, and streamed log messages in the web interface. Cancel requests interrupt an active download at the next received chunk and pause any pending batches.
@@ -56,7 +58,7 @@ The application is intended for folders and files you are authorized to access a
 5. The backend downloads selected files into `DOWNLOAD_DIR/<destination-folder>/`, streams events to the browser using Server-Sent Events (SSE), and attempts supported extension repairs.
 6. When the worker finishes, the run is recorded in SQLite and appears in History.
 
-The plan, active worker state, pending download queue, progress, and live logs are held in server memory. They are not restored after a server/container restart. The history database, exclusion rules, cookie file, and downloaded files are separate persistent data.
+The current scan plan, progress, and live logs are held in server memory and are not restored after a server/container restart. The download queue and completed-file checkpoints are stored in the application database, so interrupted and waiting batches resume automatically when the server starts again. The interrupted file is retried from the beginning; completed files are not repeated. The history database, exclusion rules, cookie file, queue, and downloaded files require their respective persistent mounts to survive a container replacement.
 
 ## Quick start with Docker Compose
 
@@ -154,10 +156,10 @@ After a successful download, extension repair recognizes PNG, JPEG, GIF, PDF, ZI
 | Container path | Contents | Persistence |
 | --- | --- | --- |
 | `/downloads` | Downloaded folder trees and each task's `source_url.txt` | Persist with a host mount or named volume |
-| `/appdata/aether_history.db` | Execution history and exclusion rules | Persist with a host mount or named volume |
+| `/appdata/aether_history.db` | Execution history, exclusion rules, and resumable download queue | Persist with a host mount or named volume |
 | `/appdata/cookies.txt` | Optional Google Drive cookie session | Persist with a host mount or named volume |
 
-History is retained indefinitely unless entries are deleted through the UI or API. A history record is written when a download worker completes; a scan by itself does not create a history entry. The UI displays history timestamps in the browser's local timezone, and `source_url.txt` records the downloading user's timezone.
+History is retained indefinitely unless entries are deleted through the UI or API. A history record is written when a download worker completes; a scan by itself does not create a history entry. The UI displays history timestamps in the browser's local timezone, and `source_url.txt` records the downloading user's timezone. Pending and interrupted queue jobs are stored in the same SQLite database and resume automatically at startup.
 Run outcomes are recorded as `Success`, `Completed with errors`, or `Canceled`.
 
 Back up both persistent locations if you want to preserve downloads and app data. Stop the container before making a raw SQLite database copy.
