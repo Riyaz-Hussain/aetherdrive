@@ -14,7 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from backend.core import (
     DATA_DIR, DOWNLOAD_DIR, COOKIE_FILE,
-    inspect_google_drive, check_file_on_disk,
+    inspect_source, download_http_file, check_file_on_disk,
     repair_extension_magic_bytes, format_size, get_cookie_file_path
 )
 import gdown
@@ -128,6 +128,24 @@ def download_with_progress(url: str, output: Path, cookie_path: Optional[str], e
         finally:
             tqdm_module.tqdm = original_tqdm
 
+def download_http_with_progress(url: str, output: Path, source_url: str, file_index: int, total_files: int) -> str:
+    progress_start = file_index / total_files * 100
+    downloaded_bytes = 0
+
+    def update_progress(amount: int):
+        nonlocal downloaded_bytes
+        if state.cancel_requested:
+            raise DownloadCancelled()
+        downloaded_bytes += amount
+        state.progress.update({
+            "percent": min(int(progress_start), 99),
+            "downloaded_bytes": downloaded_bytes,
+            "total_bytes": None,
+            "indeterminate": True
+        })
+
+    return download_http_file(url, output, source_url, update_progress)
+
 class ScanRequest(BaseModel):
     url: str
 
@@ -143,6 +161,7 @@ class ExclusionsUpdate(BaseModel):
 class DownloadRequest(BaseModel):
     destination_folder: str
     source_folder_name: Optional[str] = ""
+    source_type: Optional[str] = "google_drive"
     timezone: Optional[str] = ""
     local_datetime: Optional[str] = ""
     url: Optional[str] = ""
@@ -238,7 +257,7 @@ def scan_folder(req: ScanRequest):
     state.current_plan = None
     state.master_items = []
     state.logs_generation += 1
-    state.logs = [f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔎 Inspecting Google Drive folder..."]
+    state.logs = [f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔎 Inspecting source URL..."]
 
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
@@ -246,15 +265,16 @@ def scan_folder(req: ScanRequest):
         exclusions = [r[0] for r in cursor.fetchall()]
 
     try:
-        plan = inspect_google_drive(req.url, exclusions)
+        plan = inspect_source(req.url, exclusions)
         state.active_url = req.url.strip()
         state.current_plan = plan
         state.master_items = plan["items"]
-        state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔍 Scanned folder: {plan['destination_folder']} ({len(plan['items'])} items found)")
-        if plan.get("cookie_active"):
-            state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✓ Authenticated session active (cookies.txt applied)")
-        else:
-            if get_cookie_file_path():
+        source_label = "Google Drive folder" if plan.get("source_type") == "google_drive" else "website directory"
+        state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔍 Scanned {source_label}: {plan['destination_folder']} ({len(plan['items'])} items found)")
+        if plan.get("source_type") == "google_drive":
+            if plan.get("cookie_active"):
+                state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✓ Authenticated session active (cookies.txt applied)")
+            elif get_cookie_file_path():
                 state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ Saved cookies were rejected/empty — fell back to anonymous session.")
             else:
                 state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ℹ Running with anonymous session (no cookies.txt found)")
@@ -283,7 +303,10 @@ def reapply_rules(req: ReapplyRequest):
         size = item["size"]
         clean_sub = item["sanitized_path"]
         bloat = is_bloatware(raw_p, exclusions)
-        on_disk = check_file_on_disk(dest, clean_sub, size) if not bloat else False
+        if item.get("size_known") is False:
+            on_disk = (DOWNLOAD_DIR / dest / clean_sub).is_file() if not bloat else False
+        else:
+            on_disk = check_file_on_disk(dest, clean_sub, size) if not bloat else False
 
         if bloat:
             cat = "bloat"
@@ -409,7 +432,6 @@ async def run_download_worker(
             state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛑 Task canceled by user.")
             break
 
-        file_id = item["id"]
         rel_sub = Path(item["sanitized_path"])
         
         if len(rel_sub.parts) > 1 and rel_sub.parts[0].lower() == dest_root.name.lower():
@@ -431,16 +453,26 @@ async def run_download_worker(
         item_finished = False
 
         try:
-            url = f"https://drive.google.com/uc?id={file_id}"
-            output = await asyncio.to_thread(
-                download_with_progress,
-                url,
-                target_path,
-                cookie_path,
-                item.get("size") or 0,
-                idx,
-                total
-            )
+            if item.get("source_type") == "http":
+                output = await asyncio.to_thread(
+                    download_http_with_progress,
+                    item["download_url"],
+                    target_path,
+                    original_url or state.active_url,
+                    idx,
+                    total
+                )
+            else:
+                url = f"https://drive.google.com/uc?id={item['id']}"
+                output = await asyncio.to_thread(
+                    download_with_progress,
+                    url,
+                    target_path,
+                    cookie_path,
+                    item.get("size") or 0,
+                    idx,
+                    total
+                )
 
             item_finished = True
             if output and Path(output).exists():
@@ -547,7 +579,7 @@ async def start_download(req: DownloadRequest):
             offset_hours, offset_remainder = divmod(abs(offset_seconds), 3600)
             offset_minutes = offset_remainder // 60
             source_entry = [
-                f"Google Drive folder: {source_folder_name}",
+                f"{'Google Drive folder' if req.source_type == 'google_drive' else 'Website directory'}: {source_folder_name}",
                 f"Download started (local time): {format_source_datetime(local_timestamp)}",
                 f"Time zone: {timezone_name} (UTC{offset_sign}{offset_hours:02d}:{offset_minutes:02d})",
                 f"Same time in UTC: {format_source_datetime(utc_timestamp)} UTC",

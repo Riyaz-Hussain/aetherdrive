@@ -2,7 +2,7 @@
 
 # AetherDrive
 
-### Inspect, organize, and download Google Drive folders
+### Inspect, organize, and download Drive folders or public directories
 
 [![Docker Image](https://img.shields.io/badge/Docker-GHCR-2496ED?logo=docker&logoColor=white)](https://github.com/riyaz-hussain/aetherdrive/pkgs/container/aetherdrive)
 [![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -10,7 +10,7 @@
 
 </div>
 
-AetherDrive is a self-hosted web application for inspecting accessible Google Drive folders and selectively downloading their contents. It cleans noisy file paths, identifies files that appear to be present in the destination already, lets you filter promotional or unwanted items, and records completed download runs for later reference.
+AetherDrive is a self-hosted web application for inspecting accessible Google Drive folders and public website directory listings, then selectively downloading their contents. It cleans noisy file paths, identifies files that appear to be present in the destination already, lets you filter promotional or unwanted items, and records completed download runs for later reference.
 
 The application is intended for folders and files you are authorized to access and download. Google Drive availability, rate limits, and access controls still apply.
 
@@ -31,7 +31,7 @@ The application is intended for folders and files you are authorized to access a
 
 ## Features
 
-- **Inspect before downloading.** Scan a Google Drive folder and review the discovered files before starting a transfer.
+- **Inspect before downloading.** Scan a Google Drive folder or a public HTML directory listing and review discovered files before starting a transfer.
 - **Clean up folder and file names.** Remove common URL/domain text, `@handles`, copy labels, bracketed annotations, and repeated adjacent path components from local paths.
 - **Filter unwanted content.** Use editable, persistent wildcard rules to classify promotional or otherwise unwanted files.
 - **Check the destination for existing files.** Compare scanned items with files under the selected destination and classify likely matches as already on disk.
@@ -41,14 +41,14 @@ The application is intended for folders and files you are authorized to access a
 - **Clean up canceled batches.** After cancellation, optionally remove files created by that run and directories that are empty afterward. Pre-existing files are preserved.
 - **Reuse authorized Google Drive access.** Optionally provide a Netscape-format `cookies.txt` through the UI. The app attempts the scan with those cookies and falls back to anonymous access if that attempt does not return files.
 - **Keep a run history.** Review completed batch results, search history by folder, URL, status, or date, copy or reuse a link, and remove individual or all history entries.
-- **Keep source details with the files.** Each accepted download task records the Google Drive folder name, a readable local start time with timezone and UTC offset, the equivalent UTC time, and source URL in `source_url.txt` in the destination folder. Repeated links are not duplicated.
+- **Keep source details with the files.** Each accepted download task records the source folder or directory name, a readable local start time with timezone and UTC offset, the equivalent UTC time, and source URL in `source_url.txt` in the destination folder. Repeated links are not duplicated.
 - **Use the responsive web UI.** On smaller screens the file plan switches from a table to cards.
 - **Repair some file extensions.** After a successful download, inspect known file signatures and correct a mismatched or missing extension when the target extension is available.
 
 ## How it works
 
 1. The browser sends the supplied folder URL to the FastAPI service.
-2. The backend uses `gdown` to inspect the folder, optionally retrying without cookies if the cookie-based scan returns no files. No Google Cloud API key is configured by the app. It also requests the folder page to try to obtain a display title.
+2. Google Drive URLs are inspected with `gdown`, optionally retrying without cookies if the cookie-based scan returns no files. Other HTTP(S) URLs are treated as public HTML directory listings; their same-origin subdirectories are scanned recursively. Arbitrary web pages and authenticated website sessions are not supported.
 3. Each discovered path is sanitized and classified as **Approved**, **On Disk**, or **Bloat** using the saved wildcard rules and a local disk check.
 4. The user reviews the plan, edits the destination if needed, selects files, and starts a batch.
 5. The backend downloads selected files sequentially into `DOWNLOAD_DIR/<destination-folder>/`, streams events to the browser using Server-Sent Events (SSE), and attempts supported extension repairs.
@@ -61,7 +61,7 @@ The plan, active worker state, progress, and live logs are held in server memory
 ### Requirements
 
 - Docker Engine with the Compose plugin, or a compatible Docker host such as Portainer.
-- A host with network access to Google Drive and the GitHub Container Registry.
+- A host with network access to Google Drive or the source website, and the GitHub Container Registry.
 - Writable host directories for downloads and AetherDrive application data.
 
 Create a working directory and persistent folders:
@@ -115,13 +115,15 @@ The repository's GitHub Actions workflow publishes container images to GHCR for 
 
 ## Using AetherDrive
 
-1. **Inspect a folder:** Paste a Google Drive folder link into the URL field and choose **Inspect & Plan**. The folder must be accessible to the app, either anonymously or with a valid cookie session.
+1. **Inspect a folder:** Paste a Google Drive folder link or a public HTML directory-listing URL into the URL field and choose **Inspect & Plan**. Google Drive folders must be accessible to the app, either anonymously or with a valid cookie session. Website listings must be publicly accessible without a browser login.
 2. **Review the plan:** The counters and tabs show all scanned items, approved items, items considered on disk, and items matched by exclusion rules. Review paths, sizes, and statuses before proceeding.
 3. **Choose a destination:** Edit the destination directory name. Downloads are placed underneath the configured downloads directory. Use **Re-Apply** after changing the destination or exclusion rules to recalculate the plan against disk.
 4. **Select files:** Check individual items, or use the select-all checkbox to select all items in the current category view. Items classified as on disk or bloat are not selected by default, but can be selected in the plan.
 5. **Execute or cancel:** Choose **Execute** to start a batch. The live stream shows the current file and log events. **Cancel** stops an in-progress transfer at the next received download chunk and prevents remaining files from starting. After cancellation, choose **Remove Created Files** to remove files created by that run and any folders that are empty afterward. Existing files are kept.
 6. **Review history:** Open **History** to search and review completed runs. Copy a stored link, use it to start a new inspection, or delete history records.
 7. **Start another task:** Use **Start New Task** in the completion banner to reset the current in-memory workspace.
+
+Website directory scans are restricted to public HTTP(S) hosts and to the submitted directory's same-origin subtree. Scans are limited to 500 directories, 20 levels deep, 2,000 files, and 4 MiB per listing page. Links that leave the source directory or redirect to another origin are not followed. Website file sizes may be unknown, so their progress is shown as indeterminate.
 
 ### Exclusions
 
@@ -183,7 +185,7 @@ FastAPI's interactive API documentation is available at `/docs` while the servic
 | `DELETE` | `/api/cookies` | Delete the saved cookie file. |
 | `GET` | `/api/exclusions` | Return the active wildcard rules. |
 | `POST` | `/api/exclusions` | Replace rules using `{"patterns":["*sample*"]}`. |
-| `POST` | `/api/scan` | Inspect a folder using `{"url":"https://drive.google.com/drive/folders/..."}`. |
+| `POST` | `/api/scan` | Inspect a Google Drive folder or public HTML directory listing using `{"url":"https://..."}`. |
 | `POST` | `/api/reapply` | Re-evaluate the current in-memory scan with `{"destination_folder":"..."}`. |
 | `POST` | `/api/download` | Start a batch from `destination_folder`, optional `url`, and an `items` array; items with `selected: true` are queued. |
 | `POST` | `/api/cancel` | Request cancellation of the active batch. |
@@ -236,13 +238,13 @@ The main UI is `frontend/index.html`. A legacy `frontend/index copy.html` file a
 - **Protect cookie data:** A pasted Google Drive cookie file is stored as plaintext at `DATA_DIR/cookies.txt`. Treat it like a credential, limit access to the host data directory, and remove it from the UI when no longer needed.
 - **Protect persistent data:** The database contains Drive URLs and execution metadata. Ensure `/appdata` backups and host permissions are appropriate for your environment.
 - **Review links and content:** Only use folders and files you have permission to access and download. Respect copyright, privacy, and Google Drive terms.
-- **External dependencies:** Folder inspection and downloads depend on Google Drive and `gdown`; browser styling and behavior depend on CDN-hosted front-end libraries. Changes to those services can affect availability.
+- **External dependencies:** Google Drive transfers depend on Google Drive and `gdown`; website transfers depend on the source site's public directory listings. Browser styling and behavior depend on CDN-hosted front-end libraries. Changes to those services can affect availability.
 
 ## Troubleshooting
 
 | Symptom | Things to check |
 | --- | --- |
-| A folder cannot be scanned or returns no files | Confirm the URL points to a folder, the folder is accessible to the app, and Google Drive has not rate-limited the request. Try a current cookie export for an account that can access it. |
+| A folder cannot be scanned or returns no files | Confirm the URL points to a Google Drive folder or a public HTML directory listing. The website host must be publicly reachable, and its listing must expose links to files. For Google Drive, check access and rate limits; try a current cookie export for an account that can access it. |
 | Cookie-based access is not used | Re-export a Netscape-format `cookies.txt` while signed in to Google Drive, paste it into the Cookie Session dialog, and confirm the cookie status. Cookies can expire or be rejected; the app can fall back to anonymous access. |
 | Files are classified as **On Disk** | Review the sanitized path and size. Re-Apply checks the selected destination again. Matching is path/size based, not a content hash. |
 | Expected files are in **Bloat** | Check the active wildcard patterns in Exclusions and remove or adjust any matching rule, then re-apply. |

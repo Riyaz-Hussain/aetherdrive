@@ -3,8 +3,13 @@ import re
 import math
 import fnmatch
 import unicodedata
+import ipaddress
+import posixpath
+import socket
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 import requests
 import gdown
 
@@ -82,6 +87,239 @@ def check_file_on_disk(destination_folder: str, sanitized_subpath: str, size: in
         if disk_size == size or abs(disk_size - size) < 1024:
             return True
     return False
+
+def _validated_http_url(
+    url: str,
+    base_origin: Optional[tuple[str, str, int]] = None,
+    base_path: Optional[str] = None,
+    *,
+    resolve_host: bool = True
+) -> tuple[str, str, int, str]:
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("Only public HTTP or HTTPS directory links are supported.")
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as err:
+        raise ValueError("The source URL has an invalid port.") from err
+    host = parsed.hostname.lower()
+    origin = (parsed.scheme, host, port)
+    if base_origin and origin != base_origin:
+        raise ValueError("Directory links and redirects must remain on the same origin.")
+
+    decoded_path = unquote(parsed.path)
+    if "\\" in decoded_path or any(part == ".." for part in decoded_path.split("/")):
+        raise ValueError("The source URL contains an invalid path.")
+    normalized_path = posixpath.normpath("/" + decoded_path.lstrip("/"))
+    if decoded_path.endswith("/") and not normalized_path.endswith("/"):
+        normalized_path += "/"
+    if base_path and normalized_path.rstrip("/") != base_path.rstrip("/") and not normalized_path.startswith(base_path.rstrip("/") + "/"):
+        raise ValueError("Directory links must remain inside the submitted directory.")
+
+    if resolve_host:
+        try:
+            addresses = {entry[4][0] for entry in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)}
+        except OSError as err:
+            raise ValueError(f"Could not resolve source host '{host}'.") from err
+        if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
+            raise ValueError("The source host must resolve only to public IP addresses.")
+    return origin[0], host, port, normalized_path
+
+def _origin_for_url(url: str) -> tuple[str, str, int]:
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Enter a valid HTTP or HTTPS directory URL.")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return parsed.scheme, parsed.hostname.lower(), port
+
+def _safe_get(
+    session: requests.Session,
+    url: str,
+    base_origin: tuple[str, str, int],
+    base_path: str,
+    *,
+    stream: bool = False
+) -> requests.Response:
+    current_url = url
+    for _ in range(6):
+        _validated_http_url(current_url, base_origin, base_path)
+        response = session.get(current_url, timeout=20, allow_redirects=False, stream=stream)
+        if response.is_redirect or response.is_permanent_redirect:
+            location = response.headers.get("Location")
+            response.close()
+            if not location:
+                raise ValueError("The source site returned a redirect without a destination.")
+            current_url = urljoin(current_url, location)
+            continue
+        try:
+            response.raise_for_status()
+        except requests.RequestException:
+            response.close()
+            raise
+        return response
+    raise ValueError("The source site returned too many redirects.")
+
+class _DirectoryLinks(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.links: List[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]):
+        if tag.lower() == "a":
+            href = dict(attrs).get("href")
+            if href:
+                self.links.append(href)
+
+def inspect_http_directory(url: str, exclusions: Optional[List[str]] = None) -> Dict[str, Any]:
+    parsed = urlsplit(url.strip())
+    normalized_url = urlunsplit((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path if parsed.path.endswith("/") else parsed.path + "/",
+        parsed.query,
+        parsed.fragment
+    ))
+    parsed = urlsplit(normalized_url)
+    base_origin = _origin_for_url(normalized_url)
+    _, _, _, base_path = _validated_http_url(normalized_url, base_origin)
+    if not base_path.endswith("/"):
+        base_path += "/"
+
+    session = requests.Session()
+    session.headers["User-Agent"] = "AetherDrive/1.0 (authorized directory downloads)"
+    pending = [(normalized_url, "", 0)]
+    visited: set[str] = set()
+    remote_files: List[tuple[str, str]] = []
+    seen_file_paths: set[str] = set()
+    root_title: Optional[str] = None
+
+    while pending:
+        directory_url, relative_directory, depth = pending.pop()
+        if directory_url in visited:
+            continue
+        visited.add(directory_url)
+        if depth > 20:
+            raise ValueError("The directory listing is nested too deeply (maximum depth is 20).")
+
+        with _safe_get(session, directory_url, base_origin, base_path, stream=True) as response:
+            content_type = response.headers.get("Content-Type", "").lower()
+            if "text/html" not in content_type:
+                if not relative_directory:
+                    raise ValueError("This URL is not an HTML directory listing.")
+                remote_files.append((response.url, relative_directory.rstrip("/")))
+                continue
+            page_url = response.url
+            page_bytes = bytearray()
+            for chunk in response.iter_content(chunk_size=65536):
+                page_bytes.extend(chunk)
+                if len(page_bytes) > 4 * 1024 * 1024:
+                    raise ValueError("A directory listing page exceeds the 4 MiB scan limit.")
+            html = bytes(page_bytes).decode(response.encoding or "utf-8", errors="replace")
+
+        parser = _DirectoryLinks()
+        parser.feed(html)
+        if not relative_directory and root_title is None:
+            title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+            if title_match and title_match.group(1).strip():
+                root_title = re.sub(r"\s+", " ", title_match.group(1)).strip()
+
+        for href in parser.links:
+            candidate = urljoin(page_url, href)
+            try:
+                _, _, _, candidate_path = _validated_http_url(
+                    candidate, base_origin, base_path, resolve_host=False
+                )
+            except ValueError:
+                continue
+            current_path = unquote(urlsplit(page_url).path)
+            if candidate_path.rstrip("/") == current_path.rstrip("/"):
+                continue
+            relative_path = candidate_path[len(base_path):]
+            if not relative_path or relative_path.startswith("/"):
+                continue
+            relative_path = unquote(relative_path)
+            segments = relative_path.strip("/").split("/")
+            if any(
+                part in {"", ".", ".."} or any(ord(char) < 32 or ord(char) == 127 for char in part)
+                for part in segments
+            ):
+                continue
+            if candidate_path.endswith("/"):
+                pending.append((candidate, relative_path, depth + 1))
+            else:
+                relative_file = relative_path
+                if relative_file not in seen_file_paths:
+                    seen_file_paths.add(relative_file)
+                    remote_files.append((candidate, relative_file))
+                if len(remote_files) > 2000:
+                    raise ValueError("The directory contains more than 2,000 files; narrow the submitted directory.")
+        if len(visited) + len(pending) > 500:
+            raise ValueError("The directory tree contains too many folders (maximum 500).")
+
+    if not remote_files:
+        raise ValueError("No downloadable files were found. The URL must expose a public HTML directory listing.")
+
+    path_parts = [part for part in unquote(parsed.path).split("/") if part]
+    root_name = path_parts[-1] if path_parts else (parsed.hostname or "Website")
+    if root_title and not root_title.lower().startswith("index of") and root_title.lower() != "directory listing":
+        root_name = root_title
+    root_name = root_name.replace("\\", "/").split("/")[-1].strip()
+    if root_name in {"", ".", ".."}:
+        root_name = path_parts[-1] if path_parts else (parsed.hostname or "Website")
+    destination = sanitize_destination_name(root_name)
+
+    items = []
+    for file_url, raw_path in remote_files:
+        clean_path = sanitize_path_tree(raw_path)
+        bloat = is_bloatware(raw_path, exclusions)
+        exists = (DOWNLOAD_DIR / destination / clean_path).is_file()
+        category = "bloat" if bloat else ("on_disk" if exists else "approved")
+        items.append({
+            "id": file_url,
+            "download_url": file_url,
+            "source_type": "http",
+            "original_path": raw_path,
+            "sanitized_path": clean_path,
+            "size": 0,
+            "size_str": "Unknown",
+            "size_known": False,
+            "category": category,
+            "selected": category == "approved"
+        })
+
+    return {
+        "destination_folder": destination,
+        "source_folder_name": destination,
+        "destination_exists_on_disk": (DOWNLOAD_DIR / destination).exists(),
+        "cookie_active": False,
+        "source_type": "http",
+        "items": items
+    }
+
+def inspect_source(url: str, exclusions: Optional[List[str]] = None) -> Dict[str, Any]:
+    hostname = (urlsplit(url.strip()).hostname or "").lower()
+    if hostname in {"drive.google.com", "docs.google.com"}:
+        plan = inspect_google_drive(url, exclusions)
+        plan["source_type"] = "google_drive"
+        return plan
+    return inspect_http_directory(url, exclusions)
+
+def download_http_file(url: str, output: Path, source_url: str, on_chunk) -> str:
+    base_origin = _origin_for_url(source_url)
+    _, _, _, base_path = _validated_http_url(source_url, base_origin)
+    if not base_path.endswith("/"):
+        base_path += "/"
+    session = requests.Session()
+    session.headers["User-Agent"] = "AetherDrive/1.0 (authorized directory downloads)"
+    temporary_path = output.with_name(output.name + ".part")
+    with _safe_get(session, url, base_origin, base_path, stream=True) as response:
+        with temporary_path.open("wb") as file:
+            for chunk in response.iter_content(chunk_size=1024 * 128):
+                if chunk:
+                    on_chunk(len(chunk))
+                    file.write(chunk)
+    temporary_path.replace(output)
+    return str(output)
 
 def extract_remote_drive_title(url: str, cookie_path: Optional[str] = None) -> Optional[str]:
     try:
