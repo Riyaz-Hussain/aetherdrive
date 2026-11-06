@@ -191,6 +191,7 @@ def inspect_http_directory(url: str, exclusions: Optional[List[str]] = None) -> 
         parsed.fragment
     ))
     parsed = urlsplit(normalized_url)
+    root_folder_name = unquote(parsed.path.rstrip("/").rsplit("/", 1)[-1])
     base_origin = _origin_for_url(normalized_url)
     _, _, _, base_path = _validated_http_url(normalized_url, base_origin)
     if not base_path.endswith("/"):
@@ -249,6 +250,8 @@ def inspect_http_directory(url: str, exclusions: Optional[List[str]] = None) -> 
                 part in {"", ".", ".."} or any(ord(char) < 32 or ord(char) == 127 for char in part)
                 for part in segments
             ):
+                continue
+            if depth == 0 and len(segments) == 1 and segments[0].casefold() == root_folder_name.casefold():
                 continue
             if candidate_path.endswith("/"):
                 pending.append((candidate, relative_path, depth + 1))
