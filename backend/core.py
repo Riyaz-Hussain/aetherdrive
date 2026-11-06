@@ -19,7 +19,7 @@ COOKIE_FILE = DATA_DIR / "cookies.txt"
 
 DEFAULT_EXCLUSIONS = [
     "*trailer*", "*sample*", "*preview*", "*bonus*", "*promo*",
-    "*reels*", "*short*", "*teaser*", "*advert*", "*watermark*",
+    "*reels*", "*short*", "*teaser*",
     "*.nfo", "*.txt", "*.url", "*.lnk", "*.exe"
 ]
 
@@ -191,7 +191,6 @@ def inspect_http_directory(url: str, exclusions: Optional[List[str]] = None) -> 
     visited: set[str] = set()
     remote_files: List[tuple[str, str]] = []
     seen_file_paths: set[str] = set()
-    root_title: Optional[str] = None
 
     while pending:
         directory_url, relative_directory, depth = pending.pop()
@@ -218,10 +217,6 @@ def inspect_http_directory(url: str, exclusions: Optional[List[str]] = None) -> 
 
         parser = _DirectoryLinks()
         parser.feed(html)
-        if not relative_directory and root_title is None:
-            title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
-            if title_match and title_match.group(1).strip():
-                root_title = re.sub(r"\s+", " ", title_match.group(1)).strip()
 
         for href in parser.links:
             candidate = urljoin(page_url, href)
@@ -261,8 +256,6 @@ def inspect_http_directory(url: str, exclusions: Optional[List[str]] = None) -> 
 
     path_parts = [part for part in unquote(parsed.path).split("/") if part]
     root_name = path_parts[-1] if path_parts else (parsed.hostname or "Website")
-    if root_title and not root_title.lower().startswith("index of") and root_title.lower() != "directory listing":
-        root_name = root_title
     root_name = root_name.replace("\\", "/").split("/")[-1].strip()
     if root_name in {"", ".", ".."}:
         root_name = path_parts[-1] if path_parts else (parsed.hostname or "Website")

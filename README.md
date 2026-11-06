@@ -132,8 +132,8 @@ The Exclusions dialog accepts one wildcard pattern per line. Matching is case-in
 ```text
 *trailer*    *sample*      *preview*    *bonus*
 *promo*      *reels*       *short*      *teaser*
-*advert*     *watermark*   *.nfo        *.txt
-*.url        *.lnk          *.exe
+*.nfo        *.txt         *.url        *.lnk
+*.exe
 ```
 
 Rules classify items as **Bloat**; they do not delete files. You can edit or remove patterns in the Exclusions dialog.

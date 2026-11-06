@@ -51,10 +51,14 @@ def init_db():
         if cursor.fetchone()[0] == 0:
             defaults = [
                 "*trailer*", "*sample*", "*preview*", "*bonus*", "*promo*",
-                "*reels*", "*short*", "*teaser*", "*advert*", "*watermark*",
+                "*reels*", "*short*", "*teaser*",
                 "*.nfo", "*.txt", "*.url", "*.lnk", "*.exe"
             ]
             conn.executemany("INSERT OR IGNORE INTO exclusion_rules (pattern) VALUES (?)", [(d,) for d in defaults])
+        conn.execute(
+            "DELETE FROM exclusion_rules WHERE lower(pattern) IN (?, ?)",
+            ("*advert*", "*watermark*")
+        )
         conn.commit()
 
 init_db()
