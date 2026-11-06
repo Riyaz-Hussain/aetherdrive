@@ -309,23 +309,26 @@
                             }"
                             x-text="item.category === 'approved' ? 'Approved' : (item.category === 'on_disk' ? 'On Disk' : 'Bloat')">
                       </span>
-                      <div x-show="item.category === 'bloat' && item.bloat_reasons?.length"
-                           class="mt-1 space-y-1 text-[10px] text-amber-300">
-                        <template x-for="reason in (item.bloat_reasons || [])" :key="`${reason.pattern}-${reason.matched_on}`">
-                          <div class="flex items-center justify-between gap-1">
-                            <span x-text="`Matched rule: ${reason.pattern} (${reason.matched_on})`"></span>
-                            <button @click.stop="removeExclusionRule(reason.pattern)"
-                                    :disabled="removingExclusionRule === reason.pattern"
-                                    :title="`Remove ${reason.pattern} for all files`"
-                                    class="text-rose-300 hover:text-rose-200 underline underline-offset-2 whitespace-nowrap disabled:opacity-50">
-                              <span x-text="removingExclusionRule === reason.pattern ? 'Removing...' : 'Remove rule everywhere'"></span>
-                            </button>
-                          </div>
-                        </template>
-                        <button @click="openExclusionsModal()" class="text-indigo-300 hover:text-indigo-200 underline underline-offset-2">
-                          Edit exclusion rules
-                        </button>
-                      </div>
+                      <details x-show="item.category === 'bloat' && item.bloat_reasons?.length"
+                               class="mt-1 text-left text-[10px] text-slate-400">
+                        <summary title="View matching exclusion rules"
+                                 class="cursor-pointer select-none hover:text-amber-300">Why?</summary>
+                        <div class="mt-1 space-y-1">
+                          <template x-for="reason in (item.bloat_reasons || [])" :key="`${reason.pattern}-${reason.matched_on}`">
+                            <div class="flex items-center justify-between gap-2">
+                              <span class="truncate" x-text="`${reason.pattern} · ${reason.matched_on}`"></span>
+                              <button @click.stop="removeExclusionRule(reason.pattern)"
+                                      :disabled="removingExclusionRule === reason.pattern"
+                                      :aria-label="`Remove ${reason.pattern} globally`"
+                                      :title="`Remove ${reason.pattern} for all files`"
+                                      class="shrink-0 rounded px-1.5 py-0.5 text-slate-300 hover:bg-slate-800 hover:text-rose-300 disabled:opacity-50">
+                                <span x-text="removingExclusionRule === reason.pattern ? 'Removing...' : 'Remove'"></span>
+                              </button>
+                            </div>
+                          </template>
+                          <p class="text-slate-500">Removing a rule affects every matching file. Manage all rules with Exclusions above.</p>
+                        </div>
+                      </details>
                       <div x-show="item.category === 'bloat' && !item.bloat_reasons?.length"
                            class="mt-1 text-[10px] text-amber-300">
                         Excluded by an active rule
@@ -355,26 +358,29 @@
                         x-text="item.category === 'approved' ? 'Approved' : (item.category === 'on_disk' ? 'On Disk' : 'Bloat')">
                   </span>
                 </div>
-                <div x-show="item.category === 'bloat'" class="pl-6 text-[11px] text-amber-300 space-y-1">
-                  <template x-if="item.bloat_reasons?.length">
-                    <div class="space-y-1">
-                      <template x-for="reason in item.bloat_reasons" :key="`${reason.pattern}-${reason.matched_on}`">
-                        <div class="flex flex-wrap items-center justify-between gap-1">
-                          <span x-text="`Matched rule: ${reason.pattern} (${reason.matched_on})`"></span>
-                          <button @click.stop="removeExclusionRule(reason.pattern)"
-                                  :disabled="removingExclusionRule === reason.pattern"
-                                  :title="`Remove ${reason.pattern} for all files`"
-                                  class="text-rose-300 hover:text-rose-200 underline underline-offset-2 disabled:opacity-50">
-                            <span x-text="removingExclusionRule === reason.pattern ? 'Removing...' : 'Remove rule everywhere'"></span>
-                          </button>
-                        </div>
-                      </template>
-                    </div>
-                  </template>
-                  <div x-show="!item.bloat_reasons?.length">Excluded by an active rule</div>
-                  <button @click="openExclusionsModal()" class="text-indigo-300 hover:text-indigo-200 underline underline-offset-2">
-                    Edit exclusion rules
-                  </button>
+                <details x-show="item.category === 'bloat' && item.bloat_reasons?.length"
+                         class="pl-6 text-[11px] text-slate-400">
+                  <summary title="View matching exclusion rules"
+                           class="cursor-pointer select-none hover:text-amber-300">Why?</summary>
+                  <div class="mt-1 space-y-1">
+                    <template x-for="reason in (item.bloat_reasons || [])" :key="`${reason.pattern}-${reason.matched_on}`">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="truncate" x-text="`${reason.pattern} · ${reason.matched_on}`"></span>
+                        <button @click.stop="removeExclusionRule(reason.pattern)"
+                                :disabled="removingExclusionRule === reason.pattern"
+                                :aria-label="`Remove ${reason.pattern} globally`"
+                                :title="`Remove ${reason.pattern} for all files`"
+                                class="shrink-0 rounded px-1.5 py-0.5 text-slate-300 hover:bg-slate-800 hover:text-rose-300 disabled:opacity-50">
+                          <span x-text="removingExclusionRule === reason.pattern ? 'Removing...' : 'Remove'"></span>
+                        </button>
+                      </div>
+                    </template>
+                    <p class="text-slate-500">Removing a rule affects every matching file. Manage all rules with Exclusions above.</p>
+                  </div>
+                </details>
+                <div x-show="item.category === 'bloat' && !item.bloat_reasons?.length"
+                     class="pl-6 text-[11px] text-slate-500">
+                  Excluded by an active rule. Manage rules with Exclusions above.
                 </div>
                 <div class="flex items-center justify-between text-slate-500 text-[11px] pl-6 font-mono">
                   <span class="truncate max-w-[200px]" x-text="item.original_path"></span>

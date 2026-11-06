@@ -139,7 +139,7 @@ The Exclusions dialog accepts one wildcard pattern per line. Matching is case-in
 ```
 
 Rules classify items as **Bloat**; they do not delete files. You can edit or remove patterns in the Exclusions dialog.
-Bloat items show each matching rule and whether it matched the filename, path, or both. Use **Remove rule everywhere** beside a match to immediately delete that pattern from the saved rules and recalculate the plan. This affects every file matched by that rule. **Edit exclusion rules** remains available for reviewing or changing the full list.
+Bloat items keep matching-rule details collapsed until opened. Expand **Why?** to see matching patterns and remove a rule; removing it affects every matching file. Use the **Exclusions** control in the header to review or edit the full list.
 
 ### Path cleanup and disk matching
 
