@@ -322,6 +322,9 @@ def download_http_file(url: str, output: Path, source_url: str, on_chunk) -> str
     bytes_written = 0
     try:
         with _safe_get(session, url, base_origin, base_path, stream=True) as response:
+            response_status = response.status_code
+            response_url = response.url
+            response_type = response.headers.get("Content-Type", "unknown")
             content_length = response.headers.get("Content-Length")
             try:
                 expected_bytes = int(content_length) if content_length is not None else None
@@ -335,7 +338,11 @@ def download_http_file(url: str, output: Path, source_url: str, on_chunk) -> str
                         bytes_written += len(chunk)
             content_encoding = response.headers.get("Content-Encoding", "").lower()
             if bytes_written == 0:
-                raise ValueError("The source returned an empty file; it was not saved.")
+                raise ValueError(
+                    "The source returned no file data "
+                    f"(HTTP {response_status}, Content-Type: {response_type}, "
+                    f"Content-Length: {content_length or 'unknown'}, URL: {response_url})."
+                )
             if (
                 expected_bytes is not None
                 and expected_bytes > 0
@@ -343,7 +350,9 @@ def download_http_file(url: str, output: Path, source_url: str, on_chunk) -> str
                 and bytes_written != expected_bytes
             ):
                 raise ValueError(
-                    f"The source returned an incomplete file ({bytes_written} of {expected_bytes} bytes)."
+                    "The source returned an incomplete file "
+                    f"({bytes_written} of {expected_bytes} bytes; HTTP {response_status}, "
+                    f"Content-Type: {response_type}, URL: {response_url})."
                 )
         temporary_path.replace(output)
     except Exception:
