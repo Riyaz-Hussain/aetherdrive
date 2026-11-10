@@ -176,14 +176,8 @@ private:
 };
 
 std::unique_ptr<mega::MegaApi> create_api() {
-    const char* app_key = std::getenv("MEGA_APP_KEY");
-    if (!app_key || !*app_key) {
-        throw std::runtime_error(
-            "Set MEGA_APP_KEY to a valid MEGA developer application key to use MEGA links."
-        );
-    }
     mega::MegaApi::setLogLevel(mega::MegaApi::LOG_LEVEL_FATAL);
-    return std::make_unique<mega::MegaApi>(app_key, "/tmp", "AetherDrive/1.0");
+    return std::make_unique<mega::MegaApi>("", "/tmp", "AetherDrive/1.0");
 }
 
 std::string require_stdin_link() {

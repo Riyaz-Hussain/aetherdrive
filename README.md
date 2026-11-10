@@ -89,8 +89,6 @@ services:
       DATA_DIR: /appdata
       DOWNLOAD_DIR: /downloads
       TZ: Asia/Kolkata
-      # Required only when inspecting MEGA public links.
-      MEGA_APP_KEY: ${MEGA_APP_KEY:-}
     volumes:
       - ./downloads:/downloads
       - ./appdata:/appdata
@@ -122,7 +120,7 @@ The repository's GitHub Actions workflow publishes container images to GHCR for 
 
 ## Using AetherDrive
 
-1. **Inspect a source:** Paste a Google Drive folder link, public MEGA file/folder link, or public HTML directory-listing URL into the URL field and choose **Inspect & Plan**. MEGA links require `MEGA_APP_KEY`; account/private links are not supported. Google Drive folders must be accessible to the app, either anonymously or with a valid cookie session. Website listings must be publicly accessible without a browser login.
+1. **Inspect a source:** Paste a Google Drive folder link, public MEGA file/folder link, or public HTML directory-listing URL into the URL field and choose **Inspect & Plan**. MEGA public links do not require an application key; account/private links are not supported. Google Drive folders must be accessible to the app, either anonymously or with a valid cookie session. Website listings must be publicly accessible without a browser login.
 2. **Review the plan:** The counters and tabs show all scanned items, approved items, items considered on disk, and items matched by exclusion rules. Review paths, sizes, and statuses before proceeding.
 3. **Choose a destination:** Edit the destination directory name. Downloads are placed underneath the configured downloads directory. Use **Re-Apply** after changing the destination or exclusion rules to recalculate the plan against disk.
 4. **Select files:** Check individual items, or use the select-all checkbox to select all items in the current category view. Items classified as on disk or bloat are not selected by default, but can be selected in the plan.
@@ -179,9 +177,8 @@ Do not delete the previous Docker volume or data directory if entries appear to 
 | --- | --- | --- |
 | `DOWNLOAD_DIR` | `/downloads` | Container directory used for destination folders and downloaded files. Mount persistent host storage here. |
 | `DATA_DIR` | `/appdata` | Container directory used for the SQLite database and `cookies.txt`. Mount persistent host storage here. |
-| `MEGA_APP_KEY` | unset | Required only for MEGA links. Register an application key at [MEGA Developers](https://mega.io/developers) and provide it as a container environment variable. |
 
-The application listens on port `8070`; the current container command uses that port. Map the host port to container port `8070` in Compose. There is no separate runtime port setting in the current server command. The image builds the MEGA SDK helper from pinned upstream SDK and vcpkg revisions for each target architecture. MEGA links require your own valid `MEGA_APP_KEY`; other source types do not.
+The application listens on port `8070`; the current container command uses that port. Map the host port to container port `8070` in Compose. There is no separate runtime port setting in the current server command. The image builds the MEGA SDK helper from pinned upstream SDK and vcpkg revisions for each target architecture. The SDK does not require an application key for public-link access.
 
 ## API reference
 
@@ -256,7 +253,7 @@ The main UI is `frontend/index.html`. A legacy `frontend/index copy.html` file a
 
 | Symptom | Things to check |
 | --- | --- |
-| A folder cannot be scanned or returns no files | Confirm the URL points to an accessible Google Drive folder, public MEGA share, or public HTML directory listing. MEGA scans require a valid `MEGA_APP_KEY`; website hosts must be publicly reachable and expose links to files. For Google Drive, check access and rate limits; try a current cookie export for an account that can access it. |
+| A folder cannot be scanned or returns no files | Confirm the URL points to an accessible Google Drive folder, public MEGA share, or public HTML directory listing. Website hosts must be publicly reachable and expose links to files. For Google Drive, check access and rate limits; try a current cookie export for an account that can access it. |
 | Cookie-based access is not used | Re-export a Netscape-format `cookies.txt` while signed in to Google Drive, paste it into the Cookie Session dialog, and confirm the cookie status. Cookies can expire or be rejected; the app can fall back to anonymous access. |
 | Files are classified as **On Disk** | Review the sanitized path and size. Re-Apply checks the selected destination again. Matching is path/size based, not a content hash. |
 | Expected files are in **Bloat** | Check the active wildcard patterns in Exclusions and remove or adjust any matching rule, then re-apply. |
