@@ -28,16 +28,6 @@ class MegaLinkTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     mega.validate_mega_link(link)
 
-    def test_redacts_modern_and_legacy_decryption_keys(self):
-        self.assertEqual(
-            mega.redact_mega_link("https://mega.nz/folder/folder-id#folder-key"),
-            "https://mega.nz/folder/folder-id#[key redacted]",
-        )
-        self.assertEqual(
-            mega.redact_mega_link("https://mega.nz/#F!folder-id!folder-key"),
-            "https://mega.nz/#F!folder-id![key redacted]",
-        )
-
     @patch("backend.mega._run_inspection")
     def test_inspection_maps_files_into_existing_plan_categories(self, run_inspection):
         run_inspection.return_value = {

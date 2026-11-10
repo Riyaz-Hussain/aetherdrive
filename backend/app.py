@@ -18,7 +18,7 @@ from backend.core import (
     inspect_source, download_http_file, check_file_on_disk,
     repair_extension_magic_bytes, format_size, get_cookie_file_path
 )
-from backend.mega import download_mega_file, redact_mega_link, validate_mega_link
+from backend.mega import download_mega_file, validate_mega_link
 import gdown
 
 app = FastAPI(title="AetherDrive")
@@ -302,6 +302,9 @@ class DownloadRequest(BaseModel):
     url: Optional[str] = ""
     items: List[Dict[str, Any]]
 
+class HistoryUrlUpdate(BaseModel):
+    url: str
+
 # --- Cookie Management Endpoints ---
 
 @app.get("/api/cookies/status")
@@ -361,6 +364,22 @@ def get_history():
         cursor.execute("SELECT * FROM audit_logs ORDER BY id DESC")
         rows = cursor.fetchall()
         return {"history": [dict(r) for r in rows]}
+
+@app.put("/api/history/{record_id}/url")
+def restore_history_url(record_id: int, req: HistoryUrlUpdate):
+    try:
+        restored_url = validate_mega_link(req.url)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT url FROM audit_logs WHERE id = ?", (record_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="History record not found.")
+        if "[key redacted]" not in str(row[0] or "").lower():
+            raise HTTPException(status_code=400, detail="Only legacy MEGA links with missing keys can be restored.")
+        conn.execute("UPDATE audit_logs SET url = ? WHERE id = ?", (restored_url, record_id))
+        conn.commit()
+    return {"url": restored_url}
 
 @app.delete("/api/history/{record_id}")
 def delete_history_record(record_id: int):
@@ -738,7 +757,7 @@ async def run_download_worker(
         """, (
             datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
             str(dest_root),
-            redact_mega_link(original_url or state.active_url),
+            original_url or state.active_url,
             total,
             downloaded,
             skipped,
@@ -819,7 +838,7 @@ async def start_download(req: DownloadRequest):
             raise OSError("The source_url.txt path must not be a symbolic link.")
         existing_content = source_url_path.read_text(encoding="utf-8") if source_url_path.exists() else ""
         existing_lines = existing_content.splitlines()
-        stored_url = redact_mega_link(url_to_save)
+        stored_url = url_to_save
         matching_line = next(
             (
                 index for index, line in enumerate(existing_lines)

@@ -538,10 +538,8 @@
               <div class="pt-1.5 border-t border-slate-800/80 flex items-center justify-between gap-2">
                 <span class="font-mono text-slate-500 text-[10px] truncate max-w-[180px] sm:max-w-[240px]" x-text="item.url || 'No URL stored'"></span>
                 <div class="flex items-center gap-1.5">
-                  <template x-if="isMegaLink(item.url)">
-                    <span class="text-[10px] text-slate-500" title="The share key is redacted from history. Paste the original link to inspect it again.">MEGA key redacted</span>
-                  </template>
-                  <template x-if="item.url && !isMegaLink(item.url)">
+                  <span x-show="isRedactedMegaLink(item.url)" class="text-[10px] text-slate-500" title="Paste the original full MEGA link when using this legacy entry to restore its missing key.">MEGA key unavailable</span>
+                  <template x-if="item.url">
                     <div class="flex items-center gap-1.5">
                       <button @click="copyHistoryUrl(item)" 
                               class="px-2 py-1 rounded text-[11px] transition flex items-center gap-1"
@@ -549,7 +547,7 @@
                         <i :class="copiedId === item.id ? 'fa-solid fa-check text-emerald-400' : 'fa-regular fa-copy'"></i>
                         <span x-text="copiedId === item.id ? 'Copied!' : 'Copy'"></span>
                       </button>
-                      <button @click="useHistoryUrl(item.url)" class="px-2 py-1 rounded bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 text-[11px] transition flex items-center gap-1">
+                      <button @click="useHistoryUrl(item)" class="px-2 py-1 rounded bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 text-[11px] transition flex items-center gap-1">
                         <i class="fa-solid fa-arrow-up-right-from-square"></i> Use Link
                       </button>
                     </div>
@@ -1049,16 +1047,36 @@
           }
         },
 
-        copyHistoryUrl(item) {
+        async historyActionUrl(item) {
+          if (!this.isRedactedMegaLink(item.url)) return item.url;
+          const url = window.prompt('This legacy MEGA link is missing its key. Paste the original full link to restore it:', '');
+          if (!url) return null;
+          const response = await fetch(`/api/history/${item.id}/url`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url })
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || 'Failed to restore the MEGA link.');
+          item.url = data.url;
+          return data.url;
+        },
+
+        async copyHistoryUrl(item) {
           if (!item.url) return;
-          navigator.clipboard.writeText(item.url).then(() => {
+          try {
+            const url = await this.historyActionUrl(item);
+            if (!url) return;
+            await navigator.clipboard.writeText(url);
             this.copiedId = item.id;
             setTimeout(() => {
               if (this.copiedId === item.id) {
                 this.copiedId = null;
               }
             }, 2000);
-          });
+          } catch (e) {
+            alert(e.message || 'Failed to copy the source URL.');
+          }
         },
 
         isMegaLink(url) {
@@ -1070,10 +1088,20 @@
           }
         },
 
-        useHistoryUrl(url) {
-          this.driveUrl = url;
-          this.showHistoryDrawer = false;
-          this.scanFolder();
+        isRedactedMegaLink(url) {
+          return this.isMegaLink(url) && url.toLowerCase().includes('[key redacted]');
+        },
+
+        async useHistoryUrl(item) {
+          try {
+            const url = await this.historyActionUrl(item);
+            if (!url) return;
+            this.driveUrl = url;
+            this.showHistoryDrawer = false;
+            this.scanFolder();
+          } catch (e) {
+            alert(e.message || 'Failed to use the source URL.');
+          }
         }
       }
     }

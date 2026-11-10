@@ -4,7 +4,7 @@ import selectors
 import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlsplit
 
 from backend.core import (
     DOWNLOAD_DIR,
@@ -17,29 +17,6 @@ from backend.core import (
 
 MEGA_HELPER = os.environ.get("MEGA_HELPER_PATH", "/usr/local/bin/aetherdrive-mega")
 MAX_SCAN_ITEMS = 2000
-
-
-def redact_mega_link(url: str) -> str:
-    parsed = urlsplit(url)
-    if (parsed.hostname or "").lower() not in {
-        "mega.nz", "www.mega.nz", "mega.co.nz", "www.mega.co.nz"
-    }:
-        return url
-
-    fragment_parts = parsed.fragment.split("!")
-    if len(fragment_parts) >= 3 and fragment_parts[0] in {"", "F"}:
-        safe_fragment = "!".join(fragment_parts[:2] + ["[key redacted]"])
-    elif parsed.fragment:
-        safe_fragment = "[key redacted]"
-    else:
-        safe_fragment = ""
-    safe_query = urlencode([
-        (key, "[key redacted]" if key.lower() == "key" else value)
-        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-    ])
-    return urlunsplit((
-        parsed.scheme, parsed.netloc, parsed.path, safe_query, safe_fragment
-    ))
 
 
 def validate_mega_link(url: str) -> str:
