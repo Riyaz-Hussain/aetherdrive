@@ -4,6 +4,13 @@ on:
   push:
     branches: [ "main" ]
     tags: [ 'v*.*.*' ]
+    paths:
+      - ".github/workflows/docker-publish.yml"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "backend/**"
+      - "frontend/**"
+      - "native/**"
   workflow_dispatch:
 
 env:
@@ -51,7 +58,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=build-${{ matrix.architecture }}
+            type=raw,value=build-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.architecture }}
 
       - name: Build and push architecture image
         uses: docker/build-push-action@v7
@@ -95,11 +102,13 @@ jobs:
         env:
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           TAGS: ${{ steps.meta.outputs.tags }}
+          BUILD_TAG: build-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
+          image="${IMAGE,,}"
           while IFS= read -r tag; do
             [ -n "$tag" ] || continue
             docker buildx imagetools create \
               --tag "$tag" \
-              "$IMAGE:build-amd64" \
-              "$IMAGE:build-arm64"
+              "$image:${BUILD_TAG}-amd64" \
+              "$image:${BUILD_TAG}-arm64"
           done <<< "$TAGS"
