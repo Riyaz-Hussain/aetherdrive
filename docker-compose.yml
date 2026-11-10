@@ -8,6 +8,7 @@ services:
       - DATA_DIR=/appdata
       - DOWNLOAD_DIR=/downloads
       - TZ=Asia/Kolkata
+      - MEGA_APP_KEY=${MEGA_APP_KEY:-}
     volumes:
       - </volume/DownloadsFolder>:/downloads
       - </volume/docker/appdata/aetherdrive>:/appdata

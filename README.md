@@ -2,7 +2,7 @@
 
 # AetherDrive
 
-### Inspect, organize, and download Drive folders or public directories
+### Inspect, organize, and download Drive folders, MEGA shares, or public directories
 
 [![Docker Image](https://img.shields.io/badge/Docker-GHCR-2496ED?logo=docker&logoColor=white)](https://github.com/riyaz-hussain/aetherdrive/pkgs/container/aetherdrive)
 [![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -10,7 +10,7 @@
 
 </div>
 
-AetherDrive is a self-hosted web application for inspecting accessible Google Drive folders and public website directory listings, then selectively downloading their contents. It cleans noisy file paths, identifies files that appear to be present in the destination already, lets you filter promotional or unwanted items, and records completed download runs for later reference.
+AetherDrive is a self-hosted web application for inspecting accessible Google Drive folders, public MEGA file/folder links, and public website directory listings, then selectively downloading their contents. It cleans noisy file paths, identifies files that appear to be present in the destination already, lets you filter promotional or unwanted items, and records completed download runs for later reference.
 
 The application is intended for folders and files you are authorized to access and download. Google Drive availability, rate limits, and access controls still apply.
 
@@ -32,6 +32,7 @@ The application is intended for folders and files you are authorized to access a
 ## Features
 
 - **Inspect before downloading.** Scan a Google Drive folder or a public HTML directory listing and review discovered files before starting a transfer.
+- **Download public MEGA shares.** Inspect public MEGA file and folder links, review their file names and sizes, and selectively download files through the official MEGA SDK. MEGA account sign-in, private account folders, and password-protected links are not supported.
 - **Clean up folder and file names.** Remove common URL/domain text, `@handles`, copy labels, bracketed annotations, and repeated adjacent path components from local paths.
 - **Filter unwanted content.** Use editable, persistent wildcard rules to classify promotional or otherwise unwanted files.
 - **Check the destination for existing files.** Compare scanned items with files under the selected destination and classify likely matches as already on disk.
@@ -44,15 +45,15 @@ The application is intended for folders and files you are authorized to access a
 - **Monitor a running batch.** View the current file, progress, and streamed log messages in the web interface. Cancel requests interrupt an active download at the next received chunk and pause any pending batches.
 - **Clean up canceled batches.** After cancellation, optionally remove files created by that run and directories that are empty afterward. Pre-existing files are preserved.
 - **Reuse authorized Google Drive access.** Optionally provide a Netscape-format `cookies.txt` through the UI. The app attempts the scan with those cookies and falls back to anonymous access if that attempt does not return files.
-- **Keep a run history.** Review completed batch results, search history by folder, URL, status, or date, copy or reuse a link, and remove individual or all history entries.
-- **Keep source details with the files.** Each accepted download request records the source folder or directory name, a readable local queue time with timezone and UTC offset, the equivalent UTC time, and source URL in `source_url.txt` in the destination folder. Repeated links are not duplicated.
+- **Keep a run history.** Review completed batch results, search history by folder, URL, status, or date, copy or reuse a link, and remove individual or all history entries. MEGA decryption keys are redacted; paste the original MEGA link again to inspect it.
+- **Keep source details with the files.** Each accepted download request records the source folder or directory name, a readable local queue time with timezone and UTC offset, the equivalent UTC time, and source URL in `source_url.txt` in the destination folder. MEGA decryption keys are redacted. Repeated links are not duplicated.
 - **Use the responsive web UI.** On smaller screens the file plan switches from a table to cards.
 - **Repair some file extensions.** After a successful download, inspect known file signatures and correct a mismatched or missing extension when the target extension is available.
 
 ## How it works
 
 1. The browser sends the supplied folder URL to the FastAPI service.
-2. Google Drive URLs are inspected with `gdown`, optionally retrying without cookies if the cookie-based scan returns no files. Other HTTP(S) URLs are treated as public HTML directory listings; their same-origin subdirectories are scanned recursively. Arbitrary web pages and authenticated website sessions are not supported.
+2. Google Drive URLs are inspected with `gdown`, optionally retrying without cookies if the cookie-based scan returns no files. MEGA public file/folder links are inspected and downloaded using the official native MEGA SDK. Other HTTP(S) URLs are treated as public HTML directory listings; their same-origin subdirectories are scanned recursively. Arbitrary web pages and authenticated website sessions are not supported.
 3. Each discovered path is sanitized and classified as **Approved**, **On Disk**, or **Bloat** using the saved wildcard rules and a local disk check.
 4. The user reviews the plan, edits the destination if needed, and selects files. Requests are added to the download queue; each batch downloads sequentially, and queued batches run in submission order.
 5. The backend downloads selected files into `DOWNLOAD_DIR/<destination-folder>/`, streams events to the browser using Server-Sent Events (SSE), and attempts supported extension repairs.
@@ -88,6 +89,8 @@ services:
       DATA_DIR: /appdata
       DOWNLOAD_DIR: /downloads
       TZ: Asia/Kolkata
+      # Required only when inspecting MEGA public links.
+      MEGA_APP_KEY: ${MEGA_APP_KEY:-}
     volumes:
       - ./downloads:/downloads
       - ./appdata:/appdata
@@ -119,7 +122,7 @@ The repository's GitHub Actions workflow publishes container images to GHCR for 
 
 ## Using AetherDrive
 
-1. **Inspect a folder:** Paste a Google Drive folder link or a public HTML directory-listing URL into the URL field and choose **Inspect & Plan**. Google Drive folders must be accessible to the app, either anonymously or with a valid cookie session. Website listings must be publicly accessible without a browser login.
+1. **Inspect a source:** Paste a Google Drive folder link, public MEGA file/folder link, or public HTML directory-listing URL into the URL field and choose **Inspect & Plan**. MEGA links require `MEGA_APP_KEY`; account/private links are not supported. Google Drive folders must be accessible to the app, either anonymously or with a valid cookie session. Website listings must be publicly accessible without a browser login.
 2. **Review the plan:** The counters and tabs show all scanned items, approved items, items considered on disk, and items matched by exclusion rules. Review paths, sizes, and statuses before proceeding.
 3. **Choose a destination:** Edit the destination directory name. Downloads are placed underneath the configured downloads directory. Use **Re-Apply** after changing the destination or exclusion rules to recalculate the plan against disk.
 4. **Select files:** Check individual items, or use the select-all checkbox to select all items in the current category view. Items classified as on disk or bloat are not selected by default, but can be selected in the plan.
@@ -176,8 +179,9 @@ Do not delete the previous Docker volume or data directory if entries appear to 
 | --- | --- | --- |
 | `DOWNLOAD_DIR` | `/downloads` | Container directory used for destination folders and downloaded files. Mount persistent host storage here. |
 | `DATA_DIR` | `/appdata` | Container directory used for the SQLite database and `cookies.txt`. Mount persistent host storage here. |
+| `MEGA_APP_KEY` | unset | Required only for MEGA links. Register an application key at [MEGA Developers](https://mega.io/developers) and provide it as a container environment variable. |
 
-The application listens on port `8070`; the current container command uses that port. Map the host port to container port `8070` in Compose. There is no separate runtime port setting in the current server command.
+The application listens on port `8070`; the current container command uses that port. Map the host port to container port `8070` in Compose. There is no separate runtime port setting in the current server command. The image builds the MEGA SDK helper from pinned upstream SDK and vcpkg revisions for each target architecture. MEGA links require your own valid `MEGA_APP_KEY`; other source types do not.
 
 ## API reference
 
@@ -190,7 +194,7 @@ FastAPI's interactive API documentation is available at `/docs` while the servic
 | `DELETE` | `/api/cookies` | Delete the saved cookie file. |
 | `GET` | `/api/exclusions` | Return the active wildcard rules. |
 | `POST` | `/api/exclusions` | Replace rules using `{"patterns":["*sample*"]}`. |
-| `POST` | `/api/scan` | Inspect a Google Drive folder or public HTML directory listing using `{"url":"https://..."}`. |
+| `POST` | `/api/scan` | Inspect a Google Drive folder, public MEGA link, or public HTML directory listing using `{"url":"https://..."}`. |
 | `POST` | `/api/reapply` | Re-evaluate the current in-memory scan with `{"destination_folder":"..."}`. |
 | `POST` | `/api/download` | Add a batch from `destination_folder`, optional `url`, and an `items` array to the download queue; items with `selected: true` are included. |
 | `POST` | `/api/cancel` | Cancel the active batch; pending batches remain queued and paused. |
@@ -212,7 +216,7 @@ curl -X POST http://localhost:8070/api/scan \
   -d '{"url":"https://drive.google.com/drive/folders/your-folder-id"}'
 ```
 
-The scan response includes a destination folder name, destination existence status, cookie-use status, and item records. Each item includes its Drive ID (or website download URL), original and sanitized paths, size, category, and selection state. Scans are allowed while a batch is running so another request can be prepared. Download requests are queued and rejected if no items are selected.
+The scan response includes a destination folder name, destination existence status, cookie-use status, and item records. Each item includes its Drive ID, MEGA handle, or website download URL, original and sanitized paths, size, category, and selection state. Scans are allowed while a batch is running so another request can be prepared. Download requests are queued and rejected if no items are selected.
 
 The download endpoint returns after adding the request to the in-memory queue; it does not wait for the batch to finish. Its response includes the job ID and queue position. The worker writes the audit record after finishing each batch. `GET /api/history` returns an object with a `history` array. The SSE `log` event contains a message; the `status` event includes `is_running`, `progress`, `completed_summary`, the active job, and pending queue entries. API responses can change as the application evolves; `/docs` reflects the running version.
 
@@ -230,7 +234,7 @@ export DATA_DIR="$PWD/appdata"
 uvicorn backend.app:app --host 0.0.0.0 --port 8070 --reload
 ```
 
-Open `http://localhost:8070`. The browser UI loads Alpine.js, Tailwind CSS, and Font Awesome from public CDNs, so the browser needs network access to those assets.
+Open `http://localhost:8070`. The browser UI loads Alpine.js, Tailwind CSS, and Font Awesome from public CDNs, so the browser needs network access to those assets. For local Python development, MEGA links require the native `aetherdrive-mega` helper built from the official SDK; the Docker image includes it automatically.
 
 To build the image from source:
 
@@ -244,7 +248,7 @@ The main UI is `frontend/index.html`. A legacy `frontend/index copy.html` file a
 
 - **No built-in user authentication or HTTPS:** Do not expose this service directly to an untrusted network or the public internet. Restrict access with a firewall or place it behind an appropriately configured authenticated HTTPS reverse proxy.
 - **Protect cookie data:** A pasted Google Drive cookie file is stored as plaintext at `DATA_DIR/cookies.txt`. Treat it like a credential, limit access to the host data directory, and remove it from the UI when no longer needed.
-- **Protect persistent data:** The database contains Drive URLs and execution metadata. Ensure `/appdata` backups and host permissions are appropriate for your environment.
+- **Protect persistent data:** The database contains source URLs and queued MEGA share links, including the decryption keys needed to resume interrupted transfers. Keep `/appdata` private and protect backups and host permissions accordingly. MEGA keys are redacted from execution history and `source_url.txt`, but remain in the queue database while a job is pending or resumable.
 - **Review links and content:** Only use folders and files you have permission to access and download. Respect copyright, privacy, and Google Drive terms.
 - **External dependencies:** Google Drive transfers depend on Google Drive and `gdown`; website transfers depend on the source site's public directory listings. Browser styling and behavior depend on CDN-hosted front-end libraries. Changes to those services can affect availability.
 
@@ -252,7 +256,7 @@ The main UI is `frontend/index.html`. A legacy `frontend/index copy.html` file a
 
 | Symptom | Things to check |
 | --- | --- |
-| A folder cannot be scanned or returns no files | Confirm the URL points to a Google Drive folder or a public HTML directory listing. The website host must be publicly reachable, and its listing must expose links to files. For Google Drive, check access and rate limits; try a current cookie export for an account that can access it. |
+| A folder cannot be scanned or returns no files | Confirm the URL points to an accessible Google Drive folder, public MEGA share, or public HTML directory listing. MEGA scans require a valid `MEGA_APP_KEY`; website hosts must be publicly reachable and expose links to files. For Google Drive, check access and rate limits; try a current cookie export for an account that can access it. |
 | Cookie-based access is not used | Re-export a Netscape-format `cookies.txt` while signed in to Google Drive, paste it into the Cookie Session dialog, and confirm the cookie status. Cookies can expire or be rejected; the app can fall back to anonymous access. |
 | Files are classified as **On Disk** | Review the sanitized path and size. Re-Apply checks the selected destination again. Matching is path/size based, not a content hash. |
 | Expected files are in **Bloat** | Check the active wildcard patterns in Exclusions and remove or adjust any matching rule, then re-apply. |
@@ -274,8 +278,12 @@ docker compose logs --tail=200 aetherdrive
 .
 ├── backend/
 │   ├── app.py                 # FastAPI routes, worker state, SSE, history and cookies
-│   ├── core.py                # Drive inspection, path cleanup, exclusions and file checks
+│   ├── core.py                # Drive/website inspection, path cleanup and file checks
+│   ├── mega.py                # MEGA link validation and SDK-helper integration
 │   └── requirements.txt       # Backend dependency list
+├── native/
+│   ├── CMakeLists.txt         # Builds the native helper against the official MEGA SDK
+│   └── mega_bridge.cpp        # JSON inspection and download bridge
 ├── frontend/
 │   ├── index.html             # Active single-page web interface
 │   └── index copy.html        # Legacy page snapshot
@@ -291,4 +299,4 @@ docker compose logs --tail=200 aetherdrive
 
 AetherDrive is distributed under the [MIT License](LICENSE).
 
-The project uses FastAPI, Uvicorn, `gdown`, `requests`, `sse-starlette`, Alpine.js, Tailwind CSS, and Font Awesome. Their respective licenses apply; consult their upstream projects for details.
+The project uses FastAPI, Uvicorn, `gdown`, `requests`, `sse-starlette`, the [MEGA SDK](https://github.com/meganz/sdk) (2-clause BSD), Alpine.js, Tailwind CSS, and Font Awesome. Their respective licenses apply; consult their upstream projects for details.

@@ -312,6 +312,9 @@ def inspect_source(url: str, exclusions: Optional[List[str]] = None) -> Dict[str
         plan = inspect_google_drive(url, exclusions)
         plan["source_type"] = "google_drive"
         return plan
+    if hostname in {"mega.nz", "www.mega.nz", "mega.co.nz", "www.mega.co.nz"}:
+        from backend.mega import inspect_mega_link
+        return inspect_mega_link(url, exclusions)
     return inspect_http_directory(url, exclusions)
 
 def download_http_file(url: str, output: Path, source_url: str, on_chunk) -> str:

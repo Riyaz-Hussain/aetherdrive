@@ -18,6 +18,7 @@ from backend.core import (
     inspect_source, download_http_file, check_file_on_disk,
     repair_extension_magic_bytes, format_size, get_cookie_file_path
 )
+from backend.mega import download_mega_file, redact_mega_link, validate_mega_link
 import gdown
 
 app = FastAPI(title="AetherDrive")
@@ -248,6 +249,38 @@ def download_http_with_progress(url: str, output: Path, source_url: str, file_in
 
     return download_http_file(url, output, source_url, update_progress)
 
+def download_mega_with_progress(
+    url: str,
+    item: Dict[str, Any],
+    output: Path,
+    file_index: int,
+    total_files: int
+) -> str:
+    progress_start = file_index / total_files * 100
+
+    def update_progress(downloaded_bytes: int, total_bytes: Optional[int]):
+        if state.cancel_requested:
+            raise DownloadCancelled()
+        fraction = min(downloaded_bytes / total_bytes, 1) if total_bytes else None
+        percent = (
+            progress_start + fraction / total_files * 100
+            if fraction is not None
+            else progress_start
+        )
+        state.progress.update({
+            "percent": min(int(percent), 99),
+            "downloaded_bytes": downloaded_bytes,
+            "total_bytes": total_bytes,
+            "indeterminate": total_bytes is None
+        })
+
+    return download_mega_file(
+        url,
+        str(item["mega_handle"]),
+        output,
+        update_progress
+    )
+
 class ScanRequest(BaseModel):
     url: str
 
@@ -380,7 +413,11 @@ def scan_folder(req: ScanRequest):
         state.active_url = req.url.strip()
         state.current_plan = plan
         state.master_items = plan["items"]
-        source_label = "Google Drive folder" if plan.get("source_type") == "google_drive" else "website directory"
+        source_label = {
+            "google_drive": "Google Drive folder",
+            "mega": "MEGA share",
+            "http": "website directory"
+        }.get(plan.get("source_type"), "source")
         state.logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔍 Scanned {source_label}: {plan['destination_folder']} ({len(plan['items'])} items found)")
         if plan.get("source_type") == "google_drive":
             if plan.get("cookie_active"):
@@ -569,6 +606,10 @@ async def run_download_worker(
         else:
             target_path = DOWNLOAD_DIR / dest_root / rel_sub
 
+        try:
+            target_path.resolve().relative_to(DOWNLOAD_DIR.resolve())
+        except ValueError as err:
+            raise ValueError("The destination path resolves outside the downloads directory.") from err
         state.cleanup_directories.update(ensure_download_directories(target_path.parent))
         existing_entries = set(target_path.parent.iterdir())
         target_preexisting = target_path in existing_entries
@@ -593,6 +634,21 @@ async def run_download_worker(
                     idx,
                     total
                 )
+            elif item.get("source_type") == "mega":
+                validate_mega_link(original_url or state.active_url)
+                staging_path = target_path.with_name(f"{target_path.name}.{job_id or uuid.uuid4().hex}.part")
+                staging_path.unlink(missing_ok=True)
+                output = await asyncio.to_thread(
+                    download_mega_with_progress,
+                    original_url or state.active_url,
+                    item,
+                    staging_path,
+                    idx,
+                    total
+                )
+                if output and Path(output).is_file() and Path(output).stat().st_size > 0:
+                    Path(output).replace(target_path)
+                    output = str(target_path)
             else:
                 url = f"https://drive.google.com/uc?id={item['id']}"
                 staging_path = target_path.with_name(f"{target_path.name}.{job_id or uuid.uuid4().hex}.part")
@@ -682,7 +738,7 @@ async def run_download_worker(
         """, (
             datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
             str(dest_root),
-            original_url or state.active_url,
+            redact_mega_link(original_url or state.active_url),
             total,
             downloaded,
             skipped,
@@ -696,10 +752,36 @@ async def start_download(req: DownloadRequest):
     selected = [it for it in req.items if it.get("selected")]
     if not selected:
         raise HTTPException(status_code=400, detail="No files selected.")
+    source_type = req.source_type or "google_drive"
+    if source_type not in {"google_drive", "http", "mega"}:
+        raise HTTPException(status_code=400, detail="The download source type is not supported.")
+    if any(item.get("source_type", "google_drive") != source_type for item in selected):
+        raise HTTPException(status_code=400, detail="The selected items do not match the requested source type.")
 
     url_to_save = (req.url or state.active_url).strip()
     if not url_to_save:
         raise HTTPException(status_code=400, detail="No source URL is available for this download.")
+    if source_type == "mega":
+        try:
+            validate_mega_link(url_to_save)
+        except ValueError as err:
+            raise HTTPException(status_code=400, detail=str(err)) from err
+        if any(
+            item.get("source_type") != "mega"
+            or not str(item.get("mega_handle", "")).isdigit()
+            for item in selected
+        ):
+            raise HTTPException(status_code=400, detail="The selected items do not match the inspected MEGA source.")
+    for item in selected:
+        path_text = str(item.get("sanitized_path", ""))
+        relative_path = Path(path_text)
+        if (
+            not relative_path.parts
+            or relative_path.is_absolute()
+            or any(part in {"", ".", ".."} for part in relative_path.parts)
+            or "\\" in path_text
+        ):
+            raise HTTPException(status_code=400, detail="A selected file has an invalid destination path.")
 
     if req.local_datetime:
         try:
@@ -712,33 +794,64 @@ async def start_download(req: DownloadRequest):
         local_timestamp = datetime.datetime.now().astimezone()
     timezone_name = (req.timezone if req.local_datetime else None) or local_timestamp.tzname() or "Local"
 
-    dest_root = Path(req.destination_folder.strip()) if req.destination_folder.strip() else Path("Downloads")
+    destination_name = req.destination_folder.strip() or "Downloads"
+    destination_parts = destination_name.split("/")
+    if (
+        Path(destination_name).is_absolute()
+        or any(part in {"", ".", ".."} for part in destination_parts)
+        or "\\" in destination_name
+        or any(ord(char) < 32 or ord(char) == 127 for char in destination_name)
+    ):
+        raise HTTPException(status_code=400, detail="The destination must be a relative path under /downloads/.")
+    dest_root = Path(destination_name)
+    try:
+        (DOWNLOAD_DIR / dest_root).resolve().relative_to(DOWNLOAD_DIR.resolve())
+    except ValueError as err:
+        raise HTTPException(
+            status_code=400,
+            detail="The destination folder must resolve inside /downloads/."
+        ) from err
     source_url_path = DOWNLOAD_DIR / dest_root / "source_url.txt"
     source_file_is_new = not source_url_path.exists()
     try:
         source_directories_is_new = ensure_download_directories(source_url_path.parent)
+        if source_url_path.is_symlink():
+            raise OSError("The source_url.txt path must not be a symbolic link.")
         existing_content = source_url_path.read_text(encoding="utf-8") if source_url_path.exists() else ""
         existing_lines = existing_content.splitlines()
+        stored_url = redact_mega_link(url_to_save)
         matching_line = next(
             (
                 index for index, line in enumerate(existing_lines)
-                if line == url_to_save or line == f"URL: {url_to_save}"
+                if line in {
+                    url_to_save,
+                    stored_url,
+                    f"URL: {url_to_save}",
+                    f"URL: {stored_url}",
+                    f"Source URL: {url_to_save}",
+                    f"Source URL: {stored_url}"
+                }
             ),
             None
         )
-        if matching_line is None or existing_lines[matching_line] == url_to_save:
+        if matching_line is None or existing_lines[matching_line] != f"Source URL: {stored_url}":
             source_folder_name = (req.source_folder_name or "").strip() or req.destination_folder.strip()
             utc_timestamp = local_timestamp.astimezone(datetime.timezone.utc)
             offset_seconds = int(local_timestamp.utcoffset().total_seconds())
             offset_sign = "+" if offset_seconds >= 0 else "-"
             offset_hours, offset_remainder = divmod(abs(offset_seconds), 3600)
             offset_minutes = offset_remainder // 60
+            source_label = {
+                "google_drive": "Google Drive folder",
+                "mega": "MEGA share",
+                "http": "Website directory"
+            }.get(source_type, "Source")
             source_entry = [
-                f"{'Google Drive folder' if req.source_type == 'google_drive' else 'Website directory'}: {source_folder_name}",
+                f"{source_label}: {source_folder_name}",
                 f"Request queued (local time): {format_source_datetime(local_timestamp)}",
                 f"Time zone: {timezone_name} (UTC{offset_sign}{offset_hours:02d}:{offset_minutes:02d})",
                 f"Same time in UTC: {format_source_datetime(utc_timestamp)} UTC",
-                f"Source URL: {url_to_save}"
+                f"Source URL: {stored_url}"
             ]
             if matching_line is not None:
                 existing_lines[matching_line:matching_line + 1] = source_entry
